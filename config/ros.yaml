@@ -1,0 +1,7 @@
+public_inference_module_ros:
+  ros:
+    domain_id: 0
+    node_name: "public_inference_module_motion_subscriber"
+    topic_name: "/gmr/teleop/retarget_frame"
+    qos_depth: 1
+    best_effort: true

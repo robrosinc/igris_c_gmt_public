@@ -1,0 +1,54 @@
+public_inference_module:
+  robot:
+    domain_id: 0
+    namespace: ""
+    cyclonedds_xml_path: ""
+
+  loop:
+    control_hz: 300
+    policy_hz: 50
+
+  motion_source:
+    type: "ros2"
+    csv_path: ""
+    ros_config_path: "ros.yaml"
+    layout: "reference_tracking_v1"
+    fps: 50.0
+    loop: true
+
+  policy:
+    onnx_path: "../models/wbc_teleop/policy.onnx"
+    use_motion_residual_action: true
+    action_scale: [
+      0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2,
+      0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2
+    ]
+
+  filters:
+    q_dot_lpf_cutoff_hz: 16.0
+    imu_ang_vel_lpf_cutoff_hz: 50.0
+
+  safety:
+    motion_frame_timeout_ms: 100
+    non_parallel_safety_coef: 0.8
+
+  command:
+    kinematic_modes: [PJS, PJS, PJS, PJS, PJS]
+
+    kp: [
+      60.757285, 660.634418, 230.579719,
+      118.435253, 122.136354, 60.757285, 118.435253, 93.373568, 77.634366,
+      118.435253, 122.136354, 60.757285, 118.435253, 93.373568, 77.634366,
+      60.757285, 60.757285, 60.757285, 60.757285, 15.0, 15.0, 15.0,
+      60.757285, 60.757285, 60.757285, 60.757285, 15.0, 15.0, 15.0,
+      5.0, 10.0
+    ]
+
+    kd: [
+      4.297699, 36.256342, 12.653342,
+      15.079645, 10.367256, 4.297699, 15.079645, 14.863025, 12.355893,
+      15.079645, 10.367256, 4.297699, 15.079645, 14.863025, 12.355893,
+      4.297699, 4.297699, 4.297699, 4.297699, 0.1, 0.1, 0.1,
+      4.297699, 4.297699, 4.297699, 4.297699, 0.1, 0.1, 0.1,
+      0.1, 0.1
+    ]
