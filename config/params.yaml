@@ -17,10 +17,9 @@ public_inference_module:
     layout: "reference_tracking_v1"
     fps: 50.0
     loop: false
-    play_reference_when_live_stale: false
 
   policy:
-    onnx_path: "../models/wbc_teleop/student_101.onnx"
+    onnx_path: "../models/wbc_teleop/teacher_89.onnx"
     use_motion_residual_action: false
     zero_proprioception_ankle_velocity: true
     action_scale: [

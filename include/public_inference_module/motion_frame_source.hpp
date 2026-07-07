@@ -3,7 +3,9 @@
 #include "public_inference_module/config.hpp"
 #include "public_inference_module/types.hpp"
 
+#include <cstddef>
 #include <memory>
+#include <vector>
 
 namespace public_inference_module {
 
@@ -12,6 +14,7 @@ class MotionFrameSource {
     virtual ~MotionFrameSource() = default;
 
     virtual bool getLatest(MotionFrame &frame) = 0;
+    virtual bool getLatestStack(std::vector<MotionFrame> &frames, std::size_t length);
     virtual void reset()                       = 0;
 };
 

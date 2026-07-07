@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -215,12 +216,12 @@ int main(int argc, char **argv) {
                 if (restart) {
                     recorded_motion_source->reset();
                 }
-                public_inference_module::MotionFrame motion_frame;
-                if (!recorded_motion_source->getLatest(motion_frame)) {
+                std::vector<public_inference_module::MotionFrame> motion_frames;
+                if (!recorded_motion_source->getLatestStack(motion_frames, public_inference_module::kRlReferenceFrameStackLength)) {
                     return nullptr;
                 }
                 module.getMotionDataBuffer()->write(
-                    public_inference_module::EncodeMotionFrameAsMotionData(motion_frame, config.motion_source.layout));
+                    public_inference_module::EncodeMotionFrameStackAsMotionData(motion_frames, config.motion_source.layout));
                 return module.readMotionDataSample();
             };
 
@@ -245,17 +246,12 @@ int main(int argc, char **argv) {
                         motion_fresh = static_cast<double>(live_age_ms) <= config.motion_frame_timeout_ms;
                         motion_mode = motion_fresh ? "live" : "waiting";
                     }
-                    if (!motion_fresh && config.motion_source.play_reference_when_live_stale) {
-                        motion_data_sample = read_recorded_motion_sample(active_motion_mode != "recorded_fallback");
-                        motion_fresh = motion_data_sample && motion_data_sample->valid;
-                        motion_mode = motion_fresh ? "recorded_fallback" : "waiting";
-                    }
                 }
             } else if (motion_source) {
-                public_inference_module::MotionFrame motion_frame;
-                if (motion_source->getLatest(motion_frame)) {
+                std::vector<public_inference_module::MotionFrame> motion_frames;
+                if (motion_source->getLatestStack(motion_frames, public_inference_module::kRlReferenceFrameStackLength)) {
                     module.getMotionDataBuffer()->write(
-                        public_inference_module::EncodeMotionFrameAsMotionData(motion_frame, config.motion_source.layout));
+                        public_inference_module::EncodeMotionFrameStackAsMotionData(motion_frames, config.motion_source.layout));
                     motion_data_sample = module.readMotionDataSample();
                     motion_fresh = motion_data_sample && motion_data_sample->valid;
                     motion_mode = motion_fresh ? config.motion_source.type : "waiting";

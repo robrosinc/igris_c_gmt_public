@@ -55,6 +55,7 @@ class InferenceModule {
     void resetPolicyState();
     int computePolicy();
     bool buildMotionFrameFromMotionData(const MotionDataSample &motion_data_sample, MotionFrame &motion_frame) const;
+    bool buildMotionFrameStackFromMotionData(const MotionDataSample &motion_data_sample, std::vector<MotionFrame> &motion_frames) const;
     int updateObservationBuffer(const igris_c::msg::dds::LowState &state, const MotionDataSample *motion_data_sample);
     int updateFlattenedObservation();
     int updateLegacyFlattenedObservation();
@@ -83,6 +84,7 @@ class InferenceModule {
     ObservationLayout observation_layout_ = ObservationLayout::LegacyHistory;
     std::size_t rl_obs_input_size_        = kRlNumObsHistory;
     std::size_t rl_obs_history_len_       = kRlObsHistoryLen;
+    std::size_t rl_reference_frame_stack_len_ = kRlReferenceFrameStackLength;
 
     Vector23d q_default_               = Vector23d::Zero();
     Vector23d rl_q_                    = Vector23d::Zero();
@@ -104,6 +106,7 @@ class InferenceModule {
     Eigen::Vector3d imu_angular_vel_lpf_ = Eigen::Vector3d::Zero();
 
     MotionFrame latest_motion_frame_;
+    std::vector<MotionFrame> latest_motion_frame_stack_;
 
     size_t onnx_input_number_  = 0;
     size_t onnx_output_number_ = 0;

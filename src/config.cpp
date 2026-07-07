@@ -198,8 +198,6 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
     config.motion_source.layout        = GetOr<std::string>(motion_source_cfg, "layout", config.motion_source.layout);
     config.motion_source.fps           = GetOr<double>(motion_source_cfg, "fps", config.motion_source.fps);
     config.motion_source.loop          = GetOr<bool>(motion_source_cfg, "loop", config.motion_source.loop);
-    config.motion_source.play_reference_when_live_stale =
-        GetOr<bool>(motion_source_cfg, "play_reference_when_live_stale", config.motion_source.play_reference_when_live_stale);
 
     const YAML::Node policy_cfg = cfg["policy"];
     config.policy_onnx_path     = ResolvePath(base_dir, GetOr<std::string>(policy_cfg, "onnx_path", ""));

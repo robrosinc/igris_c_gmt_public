@@ -42,6 +42,8 @@ inline constexpr int kRlNumTotalActions           = 23;
 inline constexpr int kRlNumJointActions           = 23;
 inline constexpr int kRlObsHistoryLen             = 10;
 inline constexpr int kRlReferenceObsHistoryLen    = 20;
+inline constexpr int kRlReferenceFutureFrameCount = 10;
+inline constexpr int kRlReferenceFrameStackLength = kRlReferenceFutureFrameCount + 1;
 inline constexpr int kRlNumMotionJointPositionObs = kRlNumJointActions;
 inline constexpr int kRlNumMotionJointVelocityObs = kRlNumJointActions;
 inline constexpr int kRlNumBaseAngularVelocityObs = 3;
@@ -62,13 +64,12 @@ inline constexpr int kRlNumObsCurrent             = kRlNumMotionJointPositionObs
 inline constexpr int kRlNumObsHistory = kRlObsHistoryLen * kRlNumObsCurrent;
 inline constexpr int kRlNumReferenceHistoryCurrent = kRlNumJointPositionObs + kRlNumJointVelocityObs + kRlNumProjectedGravityObs +
                                                      kRlNumBaseAngularVelocityObs + kRlNumLastActionsObs;
-inline constexpr int kRlNumReferenceNonHistory =
-    kRlNumMotionJointPositionObs + kRlNumMotionJointVelocityObs + kRlNumReferenceRootPositionZObs + kRlNumReferenceRootStateObs +
-    kRlNumReferenceBodyPositionObs + kRlNumReferenceRootLinearVelocityObs + kRlNumReferenceRootAngularVelocityObs;
-inline constexpr int kRlNumReferenceTrackingObs = kRlReferenceObsHistoryLen * kRlNumReferenceHistoryCurrent + kRlNumReferenceNonHistory;
 inline constexpr int kMotionDataReferenceTrackingValues =
     kRlNumMotionJointPositionObs + kRlNumMotionJointVelocityObs + kRlNumReferenceRootPositionZObs + kRlNumReferenceRootStateObs +
     kRlNumReferenceBodyPositionObs + kRlNumReferenceRootLinearVelocityObs + kRlNumReferenceRootAngularVelocityObs;
+inline constexpr int kMotionDataReferenceTrackingValuesWithAnchor = kMotionDataReferenceTrackingValues + 4;
+inline constexpr int kRlNumReferenceNonHistory = kRlReferenceFrameStackLength * kMotionDataReferenceTrackingValues;
+inline constexpr int kRlNumReferenceTrackingObs = kRlReferenceObsHistoryLen * kRlNumReferenceHistoryCurrent + kRlNumReferenceNonHistory;
 
 using VectorQd  = Eigen::Matrix<double, kModelDof, 1>;
 using Vector23d = Eigen::Matrix<double, kRlNumJointActions, 1>;

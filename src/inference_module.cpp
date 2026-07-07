@@ -254,12 +254,17 @@ int InferenceModule::loadConfig(const InferenceConfig &config) {
 
         for (size_t i = 0; i < onnx_input_number_; ++i) {
             std::vector<int64_t> shape;
-            if (static_cast<int>(i) == onnx_input_obs_index_) {
-                shape = ObservationTensorShape(config_.motion_source.layout);
-            } else {
-                const auto tensor_info = session_->GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
-                shape                  = NormalizeTensorShape(tensor_info.GetShape());
+            Ort::TypeInfo input_type_info = session_->GetInputTypeInfo(i);
+            const auto tensor_info        = input_type_info.GetTensorTypeAndShapeInfo();
+            shape = tensor_info.GetShape();
+            bool has_dynamic_dimension = false;
+            for (const auto dimension : shape) {
+                has_dynamic_dimension = has_dynamic_dimension || dimension <= 0;
             }
+            if (static_cast<int>(i) == onnx_input_obs_index_ && has_dynamic_dimension) {
+                shape = ObservationTensorShape(config_.motion_source.layout);
+            }
+            shape = NormalizeTensorShape(shape);
             PrintShape(module_label_, onnx_input_names_[i], shape);
 
             const size_t element_count = CountShapeElements(shape);
@@ -269,10 +274,14 @@ int InferenceModule::loadConfig(const InferenceConfig &config) {
                     observation_layout_ = detectObservationLayout(element_count);
                     rl_obs_input_size_  = element_count;
                     rl_obs_flat_.setZero(static_cast<Eigen::Index>(rl_obs_input_size_));
+                    std::cerr << module_label_ << " observation layout="
+                              << (observation_layout_ == ObservationLayout::ReferenceTracking ? "reference_tracking" : "legacy_history")
+                              << " history_len=" << rl_obs_history_len_
+                              << " reference_stack_len=" << rl_reference_frame_stack_len_ << "\n";
                 } catch (const std::invalid_argument &) {
                     std::cerr << module_label_ << " unsupported obs size " << element_count << ". Legacy obs must be N * "
-                              << kRlNumObsCurrent << "; reference tracking obs must be N * " << kRlNumReferenceHistoryCurrent << " + "
-                              << kRlNumReferenceNonHistory << ".\n";
+                              << kRlNumObsCurrent << "; reference_tracking_v1 obs must be exactly "
+                              << kRlNumReferenceTrackingObs << ".\n";
                     return -1;
                 }
             }
@@ -428,6 +437,71 @@ bool InferenceModule::buildMotionFrameFromMotionData(const MotionDataSample &mot
     return true;
 }
 
+bool InferenceModule::buildMotionFrameStackFromMotionData(const MotionDataSample &motion_data_sample,
+                                                          std::vector<MotionFrame> &motion_frames) const {
+    motion_frames.clear();
+    if (!motion_data_sample.valid) {
+        return false;
+    }
+
+    if (config_.motion_source.layout != "reference_tracking_v1") {
+        MotionFrame motion_frame;
+        if (!buildMotionFrameFromMotionData(motion_data_sample, motion_frame)) {
+            return false;
+        }
+        motion_frames.assign(kRlReferenceFrameStackLength, motion_frame);
+        return true;
+    }
+
+    const std::size_t frame_payload_size = static_cast<std::size_t>(kMotionDataReferenceTrackingValuesWithAnchor);
+    const std::size_t expected_payload_size = frame_payload_size * static_cast<std::size_t>(kRlReferenceFrameStackLength);
+    if (motion_data_sample.values.size() != expected_payload_size) {
+        return false;
+    }
+
+    motion_frames.reserve(static_cast<std::size_t>(kRlReferenceFrameStackLength));
+    std::size_t offset = 0;
+    for (std::size_t frame_index = 0; frame_index < static_cast<std::size_t>(kRlReferenceFrameStackLength); ++frame_index) {
+        MotionFrame frame;
+        frame.seq      = motion_data_sample.seq + static_cast<uint64_t>(frame_index);
+        frame.stamp_ns = motion_data_sample.stamp_ns;
+        frame.valid    = true;
+
+        for (std::size_t i = 0; i < frame.joint_position.size(); ++i) {
+            frame.joint_position[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.joint_position.size();
+        for (std::size_t i = 0; i < frame.joint_velocity.size(); ++i) {
+            frame.joint_velocity[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.joint_velocity.size();
+        frame.root_position_z = motion_data_sample.values[offset++];
+        for (std::size_t i = 0; i < frame.root_state.size(); ++i) {
+            frame.root_state[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.root_state.size();
+        for (std::size_t i = 0; i < frame.body_position.size(); ++i) {
+            frame.body_position[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.body_position.size();
+        for (std::size_t i = 0; i < frame.root_linear_velocity.size(); ++i) {
+            frame.root_linear_velocity[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.root_linear_velocity.size();
+        for (std::size_t i = 0; i < frame.root_angular_velocity.size(); ++i) {
+            frame.root_angular_velocity[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.root_angular_velocity.size();
+        for (std::size_t i = 0; i < frame.anchor_quaternion_wxyz.size(); ++i) {
+            frame.anchor_quaternion_wxyz[i] = motion_data_sample.values[offset + i];
+        }
+        offset += frame.anchor_quaternion_wxyz.size();
+        frame.anchor_quaternion_valid = true;
+        motion_frames.push_back(frame);
+    }
+    return true;
+}
+
 void InferenceModule::buildHoldCommand(const igris_c::msg::dds::LowState &state, InferenceCommand &command) const {
     command.kinematic_modes = config_.kinematic_modes;
     command.q.setZero();
@@ -460,6 +534,7 @@ void InferenceModule::initializeRlState() {
     joint_velocity_lpf_.setZero();
     imu_angular_vel_lpf_.setZero();
     velocity_lpf_initialized_ = false;
+    latest_motion_frame_stack_.clear();
 }
 
 void InferenceModule::resetPolicyState() {
@@ -480,6 +555,7 @@ void InferenceModule::resetPolicyState() {
     imu_angular_vel_lpf_.setZero();
     velocity_lpf_initialized_         = false;
     latest_motion_frame_              = MotionFrame{};
+    latest_motion_frame_stack_.clear();
 }
 
 int InferenceModule::computePolicy() {
@@ -514,10 +590,11 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
         return -1;
     }
 
-    MotionFrame motion_frame;
-    if (!buildMotionFrameFromMotionData(*motion_data_sample, motion_frame)) {
+    std::vector<MotionFrame> motion_frames;
+    if (!buildMotionFrameStackFromMotionData(*motion_data_sample, motion_frames)) {
         return -1;
     }
+    MotionFrame motion_frame = motion_frames.front();
 
     rl_last_actions_ = rl_actions_;
 
@@ -532,12 +609,16 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
         rl_motion_q_dot_(static_cast<Eigen::Index>(i)) = motion_frame.joint_velocity[i];
     }
 
-    if (motion_frame.anchor_quaternion_valid) {
-        motion_frame.root_state = RootStateFromReferenceQuaternion(state, motion_frame.anchor_quaternion_wxyz);
+    for (MotionFrame &reference_frame : motion_frames) {
+        if (reference_frame.anchor_quaternion_valid) {
+            reference_frame.root_state = RootStateFromReferenceQuaternion(state, reference_frame.anchor_quaternion_wxyz);
+        }
     }
+    motion_frame = motion_frames.front();
     rl_base_ang_vel_   = ComputeBaseLinkAngularVelocity(state, imu_angular_vel_lpf_);
     rl_projected_grav_ = ComputeProjectedGravity(state);
     latest_motion_frame_ = motion_frame;
+    latest_motion_frame_stack_ = std::move(motion_frames);
 
     struct ObservationSample {
         Eigen::VectorXd motion_joint_position;
@@ -649,16 +730,38 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
     };
 
     if (!append_vector(joint_position_vec) || !append_vector(joint_velocity_vec) || !append_vector(projected_gravity_vec) ||
-        !append_vector(base_ang_vel_vec) || !append_vector(actions_vec) || !append_vector(ToVectorXd(latest_motion_frame_.joint_position)) ||
-        !append_vector(ToVectorXd(latest_motion_frame_.joint_velocity))) {
+        !append_vector(base_ang_vel_vec) || !append_vector(actions_vec)) {
         return -1;
     }
 
-    Eigen::VectorXd root_position_z(1);
-    root_position_z(0) = latest_motion_frame_.root_position_z;
-    if (!append_vector(root_position_z) || !append_vector(ToVectorXd(latest_motion_frame_.root_state)) ||
-        !append_vector(ToVectorXd(latest_motion_frame_.body_position)) || !append_vector(ToVectorXd(latest_motion_frame_.root_linear_velocity)) ||
-        !append_vector(ToVectorXd(latest_motion_frame_.root_angular_velocity))) {
+    if (rl_reference_frame_stack_len_ == 0 || latest_motion_frame_stack_.size() < rl_reference_frame_stack_len_) {
+        return -1;
+    }
+
+    auto append_reference_term = [&](const auto &getter) {
+        for (std::size_t frame_index = 0; frame_index < rl_reference_frame_stack_len_; ++frame_index) {
+            if (!append_vector(getter(latest_motion_frame_stack_[frame_index]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const auto joint_position = [](const MotionFrame &frame) { return ToVectorXd(frame.joint_position); };
+    const auto joint_velocity = [](const MotionFrame &frame) { return ToVectorXd(frame.joint_velocity); };
+    const auto root_position_z = [](const MotionFrame &frame) {
+        Eigen::VectorXd value(1);
+        value(0) = frame.root_position_z;
+        return value;
+    };
+    const auto root_state = [](const MotionFrame &frame) { return ToVectorXd(frame.root_state); };
+    const auto body_position = [](const MotionFrame &frame) { return ToVectorXd(frame.body_position); };
+    const auto root_linear_velocity = [](const MotionFrame &frame) { return ToVectorXd(frame.root_linear_velocity); };
+    const auto root_angular_velocity = [](const MotionFrame &frame) { return ToVectorXd(frame.root_angular_velocity); };
+
+    if (!append_reference_term(joint_position) || !append_reference_term(joint_velocity) || !append_reference_term(root_position_z) ||
+        !append_reference_term(root_state) || !append_reference_term(body_position) || !append_reference_term(root_linear_velocity) ||
+        !append_reference_term(root_angular_velocity)) {
         return -1;
     }
 
@@ -674,21 +777,19 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
 
 InferenceModule::ObservationLayout InferenceModule::detectObservationLayout(std::size_t obs_size) {
     if (obs_size >= static_cast<std::size_t>(kRlNumObsCurrent) && (obs_size % static_cast<std::size_t>(kRlNumObsCurrent)) == 0) {
-        rl_obs_history_len_ = obs_size / static_cast<std::size_t>(kRlNumObsCurrent);
+        rl_obs_history_len_              = obs_size / static_cast<std::size_t>(kRlNumObsCurrent);
+        rl_reference_frame_stack_len_    = kRlReferenceFrameStackLength;
         return ObservationLayout::LegacyHistory;
     }
 
-    if (obs_size > static_cast<std::size_t>(kRlNumReferenceNonHistory)) {
-        const std::size_t history_obs_size = obs_size - static_cast<std::size_t>(kRlNumReferenceNonHistory);
-        if ((history_obs_size % static_cast<std::size_t>(kRlNumReferenceHistoryCurrent)) == 0) {
-            rl_obs_history_len_ = history_obs_size / static_cast<std::size_t>(kRlNumReferenceHistoryCurrent);
-            if (rl_obs_history_len_ > 0) {
-                return ObservationLayout::ReferenceTracking;
-            }
-        }
+    if (obs_size == static_cast<std::size_t>(kRlNumReferenceTrackingObs)) {
+        rl_obs_history_len_           = kRlReferenceObsHistoryLen;
+        rl_reference_frame_stack_len_ = kRlReferenceFrameStackLength;
+        return ObservationLayout::ReferenceTracking;
     }
 
-    rl_obs_history_len_ = kRlObsHistoryLen;
+    rl_obs_history_len_           = kRlObsHistoryLen;
+    rl_reference_frame_stack_len_ = kRlReferenceFrameStackLength;
     throw std::invalid_argument("unsupported observation size");
 }
 

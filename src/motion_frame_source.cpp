@@ -16,6 +16,16 @@
 #include <vector>
 
 namespace public_inference_module {
+bool MotionFrameSource::getLatestStack(std::vector<MotionFrame> &frames, std::size_t length) {
+    frames.clear();
+    MotionFrame frame;
+    if (length == 0 || !getLatest(frame)) {
+        return false;
+    }
+    frames.assign(length, frame);
+    return true;
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -260,6 +270,35 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
         frame          = cached_frame_;
         frame.seq      = elapsed_frames;
         frame.stamp_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start_time_).count());
+        return true;
+    }
+
+    bool getLatestStack(std::vector<MotionFrame> &frames, std::size_t length) override {
+        frames.clear();
+        if (length == 0) {
+            return false;
+        }
+
+        const auto now         = Clock::now();
+        const auto elapsed_sec = std::chrono::duration<double>(now - start_time_).count();
+        const auto elapsed_frames = static_cast<std::size_t>(std::max(0.0, elapsed_sec * fps_));
+        const auto stamp_ns =
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - start_time_).count());
+
+        frames.reserve(length);
+        for (std::size_t i = 0; i < length; ++i) {
+            std::size_t frame_index = elapsed_frames + i;
+            if (config_.loop) {
+                frame_index %= num_frames_;
+            } else if (frame_index >= num_frames_) {
+                frame_index = num_frames_ - 1;
+            }
+
+            MotionFrame frame = runFrame(frame_index);
+            frame.seq = elapsed_frames + i;
+            frame.stamp_ns = stamp_ns;
+            frames.push_back(frame);
+        }
         return true;
     }
 

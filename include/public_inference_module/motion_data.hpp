@@ -66,4 +66,34 @@ inline MotionDataSample EncodeMotionFrameAsMotionData(const MotionFrame &frame) 
     return EncodeMotionFrameAsMotionData(frame, "reference_tracking_v1");
 }
 
+inline MotionDataSample EncodeMotionFrameStackAsMotionData(const std::vector<MotionFrame> &frames, const std::string &layout) {
+    if (frames.empty()) {
+        return {};
+    }
+
+    MotionDataSample sample;
+    sample.seq      = frames.front().seq;
+    sample.stamp_ns = frames.front().stamp_ns;
+    sample.valid    = frames.front().valid;
+    sample.anchor_quaternion_valid = frames.front().anchor_quaternion_valid;
+    sample.anchor_quaternion_wxyz = frames.front().anchor_quaternion_wxyz;
+
+    if (layout != "reference_tracking_v1") {
+        return EncodeMotionFrameAsMotionData(frames.front(), layout);
+    }
+
+    sample.values.reserve(frames.size() * kMotionDataReferenceTrackingValuesWithAnchor);
+    for (const MotionFrame &frame : frames) {
+        sample.values.insert(sample.values.end(), frame.joint_position.begin(), frame.joint_position.end());
+        sample.values.insert(sample.values.end(), frame.joint_velocity.begin(), frame.joint_velocity.end());
+        sample.values.push_back(frame.root_position_z);
+        sample.values.insert(sample.values.end(), frame.root_state.begin(), frame.root_state.end());
+        sample.values.insert(sample.values.end(), frame.body_position.begin(), frame.body_position.end());
+        sample.values.insert(sample.values.end(), frame.root_linear_velocity.begin(), frame.root_linear_velocity.end());
+        sample.values.insert(sample.values.end(), frame.root_angular_velocity.begin(), frame.root_angular_velocity.end());
+        sample.values.insert(sample.values.end(), frame.anchor_quaternion_wxyz.begin(), frame.anchor_quaternion_wxyz.end());
+    }
+    return sample;
+}
+
 }  // namespace public_inference_module

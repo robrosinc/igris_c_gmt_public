@@ -16,7 +16,6 @@ struct MotionSourceConfig {
     std::string layout = "reference_tracking_v1";
     double fps          = 50.0;
     bool loop           = true;
-    bool play_reference_when_live_stale = true;
 };
 
 struct RosMotionConfig {
