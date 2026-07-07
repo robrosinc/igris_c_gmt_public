@@ -224,7 +224,9 @@ MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t
     if (!has_body && !(position_valid && velocity_valid)) {
         return {};
     }
-    return EncodeMotionFrameAsMotionData(frame, "reference_tracking_v1");
+
+    return EncodeMotionFrameStackAsMotionData(std::vector<MotionFrame>(static_cast<std::size_t>(kRlReferenceFrameStackLength), frame),
+                                              "reference_tracking_v1");
 }
 
 }  // namespace
