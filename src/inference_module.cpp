@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -487,8 +488,12 @@ int InferenceModule::computePolicy() {
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    const auto inference_start = std::chrono::steady_clock::now();
     onnx_output_tensors_ = session_->Run(Ort::RunOptions{nullptr}, onnx_input_names_char_.data(), onnx_input_tensors_.data(), onnx_input_number_,
                                          onnx_output_names_char_.data(), onnx_output_number_);
+    last_policy_inference_ms_ =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inference_start).count();
+    ++policy_inference_count_;
 
     const auto action_info = onnx_output_tensors_[onnx_output_actions_index_].GetTensorTypeAndShapeInfo();
     if (action_info.GetElementCount() < static_cast<size_t>(kRlNumTotalActions)) {
@@ -520,6 +525,9 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
         const int joint_index  = kObsToSystemJointMapping[i];
         rl_q_(static_cast<Eigen::Index>(i)) = static_cast<double>(state.joint_state()[static_cast<std::size_t>(joint_index)].q());
         rl_q_dot_(static_cast<Eigen::Index>(i)) = joint_velocity_lpf_(joint_index);
+        if (config_.zero_proprioception_ankle_velocity && isAnkleObservationJoint(joint_index)) {
+            rl_q_dot_(static_cast<Eigen::Index>(i)) = 0.0;
+        }
         rl_motion_q_(static_cast<Eigen::Index>(i)) = motion_frame.joint_position[i];
         rl_motion_q_dot_(static_cast<Eigen::Index>(i)) = motion_frame.joint_velocity[i];
     }
@@ -627,6 +635,7 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
     const Eigen::VectorXd joint_velocity_vec    = obs_history_.joint_vel.toEigenVector();
     const Eigen::VectorXd projected_gravity_vec = obs_history_.projected_gravity.toEigenVector();
     const Eigen::VectorXd base_ang_vel_vec      = obs_history_.base_ang_vel.toEigenVector();
+    const Eigen::VectorXd actions_vec           = obs_history_.actions.toEigenVector();
 
     rl_obs_flat_.setZero(static_cast<Eigen::Index>(rl_obs_input_size_));
     Eigen::Index offset = 0;
@@ -640,8 +649,8 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
     };
 
     if (!append_vector(joint_position_vec) || !append_vector(joint_velocity_vec) || !append_vector(projected_gravity_vec) ||
-        !append_vector(base_ang_vel_vec) || !append_vector(ToVectorXd(rl_last_actions_)) ||
-        !append_vector(ToVectorXd(latest_motion_frame_.joint_position)) || !append_vector(ToVectorXd(latest_motion_frame_.joint_velocity))) {
+        !append_vector(base_ang_vel_vec) || !append_vector(actions_vec) || !append_vector(ToVectorXd(latest_motion_frame_.joint_position)) ||
+        !append_vector(ToVectorXd(latest_motion_frame_.joint_velocity))) {
         return -1;
     }
 
@@ -748,6 +757,10 @@ void InferenceModule::processTargetPositions(const igris_c::msg::dds::LowState &
 bool InferenceModule::isParallelJoint(int joint_index) {
     return joint_index == TM1_WR || joint_index == TM1_WP || joint_index == TM1_LAP || joint_index == TM1_LAR || joint_index == TM1_RAP ||
            joint_index == TM1_RAR;
+}
+
+bool InferenceModule::isAnkleObservationJoint(int joint_index) {
+    return joint_index == TM1_LAP || joint_index == TM1_LAR || joint_index == TM1_RAP || joint_index == TM1_RAR;
 }
 
 }  // namespace public_inference_module

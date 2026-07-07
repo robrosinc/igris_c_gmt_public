@@ -193,14 +193,19 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
     const YAML::Node motion_source_cfg = cfg["motion_source"];
     config.motion_source.type          = GetOr<std::string>(motion_source_cfg, "type", config.motion_source.type);
     config.motion_source.csv_path      = ResolvePath(base_dir, GetOr<std::string>(motion_source_cfg, "csv_path", ""));
+    config.motion_source.onnx_path     = ResolvePath(base_dir, GetOr<std::string>(motion_source_cfg, "onnx_path", ""));
     config.motion_source.ros_config_path = ResolvePath(base_dir, GetOr<std::string>(motion_source_cfg, "ros_config_path", ""));
     config.motion_source.layout        = GetOr<std::string>(motion_source_cfg, "layout", config.motion_source.layout);
     config.motion_source.fps           = GetOr<double>(motion_source_cfg, "fps", config.motion_source.fps);
     config.motion_source.loop          = GetOr<bool>(motion_source_cfg, "loop", config.motion_source.loop);
+    config.motion_source.play_reference_when_live_stale =
+        GetOr<bool>(motion_source_cfg, "play_reference_when_live_stale", config.motion_source.play_reference_when_live_stale);
 
     const YAML::Node policy_cfg = cfg["policy"];
     config.policy_onnx_path     = ResolvePath(base_dir, GetOr<std::string>(policy_cfg, "onnx_path", ""));
     config.use_motion_residual_action = GetOr<bool>(policy_cfg, "use_motion_residual_action", config.use_motion_residual_action);
+    config.zero_proprioception_ankle_velocity =
+        GetOr<bool>(policy_cfg, "zero_proprioception_ankle_velocity", config.zero_proprioception_ankle_velocity);
     config.action_scale = config.use_motion_residual_action ? GetResidualActionScale() : Vector23d::Constant(0.25);
     if (policy_cfg && policy_cfg["action_scale"]) {
         CopyFixedSequence(policy_cfg, "action_scale", config.action_scale);
@@ -236,6 +241,8 @@ RosMotionConfig LoadRosMotionConfig(const std::string &config_path) {
     config.domain_id  = static_cast<std::size_t>(GetOr<int>(ros, "domain_id", static_cast<int>(config.domain_id)));
     config.node_name  = GetOr<std::string>(ros, "node_name", config.node_name);
     config.topic_name = GetOr<std::string>(ros, "topic_name", config.topic_name);
+    config.recorded_reference_topic_name =
+        GetOr<std::string>(ros, "recorded_reference_topic_name", config.recorded_reference_topic_name);
     config.qos_depth  = static_cast<std::size_t>(GetOr<int>(ros, "qos_depth", static_cast<int>(config.qos_depth)));
     config.best_effort = GetOr<bool>(ros, "best_effort", config.best_effort);
     return config;

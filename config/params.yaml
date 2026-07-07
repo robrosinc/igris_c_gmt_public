@@ -9,19 +9,24 @@ public_inference_module:
     policy_hz: 50
 
   motion_source:
+    # type: "ros2" for live tele op, "onnx_replay" for recorded reference-motion tracking.
     type: "ros2"
     csv_path: ""
+    onnx_path: "../recorded_motions/pico_debug_squat.onnx"
     ros_config_path: "ros.yaml"
     layout: "reference_tracking_v1"
     fps: 50.0
-    loop: true
+    loop: false
+    play_reference_when_live_stale: false
 
   policy:
-    onnx_path: "../models/wbc_teleop/policy.onnx"
-    use_motion_residual_action: true
+    onnx_path: "../models/wbc_teleop/student_101.onnx"
+    use_motion_residual_action: false
+    zero_proprioception_ankle_velocity: true
     action_scale: [
-      0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2,
-      0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2
+      0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+      0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+      0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25
     ]
 
   filters:
@@ -36,7 +41,7 @@ public_inference_module:
     kinematic_modes: [PJS, PJS, PJS, PJS, PJS]
 
     kp: [
-      60.757285, 660.634418, 230.579719,
+      60.757285, 100.0, 100.0,
       118.435253, 122.136354, 60.757285, 118.435253, 93.373568, 77.634366,
       118.435253, 122.136354, 60.757285, 118.435253, 93.373568, 77.634366,
       60.757285, 60.757285, 60.757285, 60.757285, 15.0, 15.0, 15.0,
@@ -45,7 +50,7 @@ public_inference_module:
     ]
 
     kd: [
-      4.297699, 36.256342, 12.653342,
+      4.297699, 5.5, 5.5,
       15.079645, 10.367256, 4.297699, 15.079645, 14.863025, 12.355893,
       15.079645, 10.367256, 4.297699, 15.079645, 14.863025, 12.355893,
       4.297699, 4.297699, 4.297699, 4.297699, 0.1, 0.1, 0.1,

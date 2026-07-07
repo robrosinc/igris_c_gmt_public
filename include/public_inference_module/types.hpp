@@ -61,11 +61,10 @@ inline constexpr int kRlNumObsCurrent             = kRlNumMotionJointPositionObs
                                          kRlNumJointVelocityObs + kRlNumLastActionsObs;
 inline constexpr int kRlNumObsHistory = kRlObsHistoryLen * kRlNumObsCurrent;
 inline constexpr int kRlNumReferenceHistoryCurrent = kRlNumJointPositionObs + kRlNumJointVelocityObs + kRlNumProjectedGravityObs +
-                                                     kRlNumBaseAngularVelocityObs;
+                                                     kRlNumBaseAngularVelocityObs + kRlNumLastActionsObs;
 inline constexpr int kRlNumReferenceNonHistory =
-    kRlNumLastActionsObs + kRlNumMotionJointPositionObs + kRlNumMotionJointVelocityObs + kRlNumReferenceRootPositionZObs +
-    kRlNumReferenceRootStateObs + kRlNumReferenceBodyPositionObs + kRlNumReferenceRootLinearVelocityObs +
-    kRlNumReferenceRootAngularVelocityObs;
+    kRlNumMotionJointPositionObs + kRlNumMotionJointVelocityObs + kRlNumReferenceRootPositionZObs + kRlNumReferenceRootStateObs +
+    kRlNumReferenceBodyPositionObs + kRlNumReferenceRootLinearVelocityObs + kRlNumReferenceRootAngularVelocityObs;
 inline constexpr int kRlNumReferenceTrackingObs = kRlReferenceObsHistoryLen * kRlNumReferenceHistoryCurrent + kRlNumReferenceNonHistory;
 inline constexpr int kMotionDataReferenceTrackingValues =
     kRlNumMotionJointPositionObs + kRlNumMotionJointVelocityObs + kRlNumReferenceRootPositionZObs + kRlNumReferenceRootStateObs +

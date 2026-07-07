@@ -11,16 +11,19 @@ namespace public_inference_module {
 struct MotionSourceConfig {
     std::string type    = "null";
     std::string csv_path;
+    std::string onnx_path;
     std::string ros_config_path;
     std::string layout = "reference_tracking_v1";
     double fps          = 50.0;
     bool loop           = true;
+    bool play_reference_when_live_stale = true;
 };
 
 struct RosMotionConfig {
     std::size_t domain_id     = 0;
     std::string node_name     = "public_inference_module_motion_subscriber";
     std::string topic_name    = "/gmr/teleop/retarget_frame";
+    std::string recorded_reference_topic_name = "/gmr/teleop/use_recorded_reference";
     std::size_t qos_depth     = 1;
     bool best_effort          = true;
 };
@@ -33,7 +36,8 @@ struct InferenceConfig {
     int policy_hz                 = 50;
     MotionSourceConfig motion_source;
     std::string policy_onnx_path;
-    bool use_motion_residual_action = true;
+    bool use_motion_residual_action = false;
+    bool zero_proprioception_ankle_velocity = true;
     VectorQd kp                     = VectorQd::Zero();
     VectorQd kd                     = VectorQd::Zero();
     std::array<igris_c::msg::dds::KinematicMode, kParallelGroupCount> kinematic_modes{};

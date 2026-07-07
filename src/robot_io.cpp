@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 
 namespace public_inference_module {
@@ -35,6 +36,10 @@ bool RobotIo::initialize(int domain_id, const std::string &robot_namespace, cons
     if (!igris_c_sdk::ChannelFactory::Instance()->IsInitialized()) {
         return false;
     }
+
+    std::cerr << "RobotIo DDS domain_id=" << domain_id << " namespace='" << robot_namespace << "' lowstate_topic='"
+              << igris_c_sdk::ChannelFactory::Instance()->resolve("rt/lowstate") << "' lowcmd_topic='"
+              << igris_c_sdk::ChannelFactory::Instance()->resolve("rt/lowcmd") << "'\n";
 
     lowstate_sub_ = std::make_unique<igris_c_sdk::Subscriber<igris_c::msg::dds::LowState>>("rt/lowstate",
                                                                                              igris_c_sdk::QosProfile::SensorData());
@@ -84,10 +89,15 @@ bool RobotIo::publish(const InferenceCommand &command) {
 }
 
 void RobotIo::lowStateCallback(const igris_c::msg::dds::LowState &state) {
+    bool first_state = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        first_state  = !has_state_;
         latest_state_ = state;
         has_state_    = true;
+    }
+    if (first_state) {
+        std::cerr << "RobotIo received first LowState\n";
     }
     state_cv_.notify_all();
 }

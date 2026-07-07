@@ -32,6 +32,8 @@ class InferenceModule {
     std::shared_ptr<const MotionDataSample> readMotionDataSample() const {
         return motion_data_buffer_ ? motion_data_buffer_->readLatest() : nullptr;
     }
+    double lastPolicyInferenceMs() const { return last_policy_inference_ms_; }
+    uint64_t policyInferenceCount() const { return policy_inference_count_; }
 
   private:
     struct ObservationHistory {
@@ -62,12 +64,15 @@ class InferenceModule {
     void updateVelocityFilters(const igris_c::msg::dds::LowState &state);
     void processTargetPositions(const igris_c::msg::dds::LowState &state, VectorQd &desired_position) const;
     static bool isParallelJoint(int joint_index);
+    static bool isAnkleObservationJoint(int joint_index);
 
   private:
     std::string module_label_;
     InferenceConfig config_;
     int policy_decimation_ = 6;
     uint64_t control_tick_ = 0;
+    uint64_t policy_inference_count_ = 0;
+    double last_policy_inference_ms_ = 0.0;
     bool obs_update_first_ = true;
     bool obs_updated_      = false;
     bool velocity_lpf_initialized_ = false;

@@ -252,6 +252,11 @@ bool RosMotionReceiver::start(const RosMotionConfig &config) {
     qos.keep_last(config_.qos_depth);
     qos.reliability(config_.best_effort ? RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT : RMW_QOS_POLICY_RELIABILITY_RELIABLE);
 
+    if (!config_.recorded_reference_topic_name.empty()) {
+        mode_subscription_ = node_->create_subscription<std_msgs::msg::Bool>(
+            config_.recorded_reference_topic_name, qos, [this](const std_msgs::msg::Bool &msg) { modeCallback(msg); });
+    }
+
     subscription_ = node_->create_subscription<std_msgs::msg::String>(
         config_.topic_name, qos, [this](const std_msgs::msg::String &msg) { callback(msg); });
 
@@ -280,11 +285,18 @@ void RosMotionReceiver::stop() {
         executor_->remove_node(node_);
     }
     executor_.reset();
+    mode_subscription_.reset();
     subscription_.reset();
     node_.reset();
 }
 
 std::shared_ptr<const MotionDataSample> RosMotionReceiver::readLatest() const { return buffer_ ? buffer_->readLatest() : nullptr; }
+
+bool RosMotionReceiver::useRecordedReference() const { return use_recorded_reference_.load(std::memory_order_acquire); }
+
+void RosMotionReceiver::modeCallback(const std_msgs::msg::Bool &msg) {
+    use_recorded_reference_.store(msg.data, std::memory_order_release);
+}
 
 void RosMotionReceiver::callback(const std_msgs::msg::String &msg) {
     if (!buffer_) {
