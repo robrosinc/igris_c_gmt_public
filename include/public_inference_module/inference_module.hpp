@@ -66,6 +66,7 @@ class InferenceModule {
     void processTargetPositions(const igris_c::msg::dds::LowState &state, VectorQd &desired_position) const;
     static bool isParallelJoint(int joint_index);
     static bool isAnkleObservationJoint(int joint_index);
+    static void zeroAnkleObservationJoints(Vector23d &joint_position);
 
   private:
     std::string module_label_;

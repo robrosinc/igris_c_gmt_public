@@ -19,9 +19,10 @@ public_inference_module:
     loop: false
 
   policy:
-    onnx_path: "../models/wbc_teleop/teacher_89.onnx"
+    onnx_path: "../models/wbc_teleop/student_108.onnx"
     use_motion_residual_action: false
     zero_proprioception_ankle_velocity: true
+    zero_reference_motion_ankle_position: false
     action_scale: [
       0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
       0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,

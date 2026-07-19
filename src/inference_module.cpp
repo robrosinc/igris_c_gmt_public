@@ -453,6 +453,16 @@ bool InferenceModule::buildMotionFrameStackFromMotionData(const MotionDataSample
         return true;
     }
 
+    if (motion_data_sample.values.size() == static_cast<std::size_t>(kMotionDataReferenceTrackingValues) ||
+        motion_data_sample.values.size() == static_cast<std::size_t>(kMotionDataReferenceTrackingValuesWithAnchor)) {
+        MotionFrame motion_frame;
+        if (!buildMotionFrameFromMotionData(motion_data_sample, motion_frame)) {
+            return false;
+        }
+        motion_frames.assign(kRlReferenceFrameStackLength, motion_frame);
+        return true;
+    }
+
     const std::size_t frame_payload_size = static_cast<std::size_t>(kMotionDataReferenceTrackingValuesWithAnchor);
     const std::size_t expected_payload_size = frame_payload_size * static_cast<std::size_t>(kRlReferenceFrameStackLength);
     if (motion_data_sample.values.size() != expected_payload_size) {
@@ -747,7 +757,16 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
         return true;
     };
 
-    const auto joint_position = [](const MotionFrame &frame) { return ToVectorXd(frame.joint_position); };
+    const auto joint_position = [this](const MotionFrame &frame) {
+        Vector23d value;
+        for (std::size_t i = 0; i < frame.joint_position.size(); ++i) {
+            value(static_cast<Eigen::Index>(i)) = frame.joint_position[i];
+        }
+        if (config_.zero_reference_motion_ankle_position) {
+            zeroAnkleObservationJoints(value);
+        }
+        return ToVectorXd(value);
+    };
     const auto joint_velocity = [](const MotionFrame &frame) { return ToVectorXd(frame.joint_velocity); };
     const auto root_position_z = [](const MotionFrame &frame) {
         Eigen::VectorXd value(1);
@@ -862,6 +881,14 @@ bool InferenceModule::isParallelJoint(int joint_index) {
 
 bool InferenceModule::isAnkleObservationJoint(int joint_index) {
     return joint_index == TM1_LAP || joint_index == TM1_LAR || joint_index == TM1_RAP || joint_index == TM1_RAR;
+}
+
+void InferenceModule::zeroAnkleObservationJoints(Vector23d &joint_position) {
+    for (std::size_t i = 0; i < kObsToSystemJointMapping.size(); ++i) {
+        if (isAnkleObservationJoint(kObsToSystemJointMapping[i])) {
+            joint_position(static_cast<Eigen::Index>(i)) = 0.0;
+        }
+    }
 }
 
 }  // namespace public_inference_module
