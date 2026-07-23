@@ -3,10 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace public_inference_module {
@@ -156,6 +160,56 @@ void PrintShape(const std::string &module_label, const std::string &tensor_name,
     std::cerr << "]\n";
 }
 
+std::string SanitizeFileStem(const std::string &value) {
+    std::string sanitized;
+    sanitized.reserve(value.size());
+    bool previous_underscore = false;
+    for (const unsigned char ch : value) {
+        if (std::isalnum(ch) != 0) {
+            sanitized.push_back(static_cast<char>(ch));
+            previous_underscore = false;
+        } else if (!previous_underscore) {
+            sanitized.push_back('_');
+            previous_underscore = true;
+        }
+    }
+    while (!sanitized.empty() && sanitized.back() == '_') {
+        sanitized.pop_back();
+    }
+    return sanitized.empty() ? "plot" : sanitized;
+}
+
+std::string EscapeXml(const std::string &value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        switch (ch) {
+        case '&':
+            escaped += "&amp;";
+            break;
+        case '<':
+            escaped += "&lt;";
+            break;
+        case '>':
+            escaped += "&gt;";
+            break;
+        case '"':
+            escaped += "&quot;";
+            break;
+        default:
+            escaped.push_back(ch);
+            break;
+        }
+    }
+    return escaped;
+}
+
+std::string FormatDouble(double value, int precision = 4) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(precision) << value;
+    return stream.str();
+}
+
 }  // namespace
 
 InferenceModule::InferenceModule(std::string module_label)
@@ -167,6 +221,7 @@ InferenceModule::~InferenceModule() = default;
 
 int InferenceModule::initialize() {
     initializeRlState();
+    resetPlotRecorder();
 
     session_.reset();
     onnx_input_number_  = 0;
@@ -340,6 +395,7 @@ int InferenceModule::compute(const igris_c::msg::dds::LowState &state, const Mot
     updateVelocityFilters(state);
 
     const bool rl_step_tick = (control_tick_ % static_cast<uint64_t>(policy_decimation_)) == 0;
+    bool record_plot_sample = false;
     if (rl_step_tick) {
         if (updateObservationBuffer(state, motion_data_sample) != 0) {
             return -1;
@@ -348,6 +404,7 @@ int InferenceModule::compute(const igris_c::msg::dds::LowState &state, const Mot
             if (computePolicy() != 0) {
                 return -1;
             }
+            record_plot_sample = true;
             obs_updated_ = false;
         }
     }
@@ -364,7 +421,53 @@ int InferenceModule::compute(const igris_c::msg::dds::LowState &state, const Mot
     processTargetPositions(state, desired_q);
     command.q = desired_q;
 
+    if (record_plot_sample) {
+        Vector23d desired_joint_position = Vector23d::Zero();
+        for (std::size_t i = 0; i < kActionsToSystemJointMapping.size(); ++i) {
+            desired_joint_position(static_cast<Eigen::Index>(i)) = desired_q(kActionsToSystemJointMapping[i]);
+        }
+        recordPlotSample(desired_joint_position);
+    }
+
     ++control_tick_;
+    return 0;
+}
+
+int InferenceModule::runPolicyStep(const igris_c::msg::dds::LowState &state, const MotionDataSample *motion_data_sample,
+                                   InferenceCommand &command) {
+    if (!config_loaded_) {
+        return -1;
+    }
+
+    buildHoldCommand(state, command);
+    updateVelocityFilters(state);
+
+    if (updateObservationBuffer(state, motion_data_sample) != 0 || !obs_updated_) {
+        return -1;
+    }
+    if (computePolicy() != 0) {
+        return -1;
+    }
+    obs_updated_ = false;
+
+    VectorQd desired_q = command.q;
+    const Vector23d target_joint_positions = composeTargetJointPositions();
+    for (std::size_t i = 0; i < kActionsToSystemJointMapping.size(); ++i) {
+        const int joint_index = kActionsToSystemJointMapping[i];
+        desired_q(joint_index) = target_joint_positions(static_cast<Eigen::Index>(i));
+        command.kp(joint_index) = command_kp_(joint_index);
+        command.kd(joint_index) = command_kd_(joint_index);
+    }
+
+    processTargetPositions(state, desired_q);
+    command.q = desired_q;
+
+    Vector23d desired_joint_position = Vector23d::Zero();
+    for (std::size_t i = 0; i < kActionsToSystemJointMapping.size(); ++i) {
+        desired_joint_position(static_cast<Eigen::Index>(i)) = desired_q(kActionsToSystemJointMapping[i]);
+    }
+    recordPlotSample(desired_joint_position);
+
     return 0;
 }
 
@@ -610,6 +713,217 @@ void InferenceModule::initializeRlState() {
     imu_angular_vel_lpf_.setZero();
     velocity_lpf_initialized_ = false;
     latest_motion_frame_stack_.clear();
+}
+
+void InferenceModule::resetPlotRecorder() {
+    plot_samples_.clear();
+    plot_start_time_valid_ = false;
+}
+
+void InferenceModule::recordPlotSample(const Vector23d &desired_joint_position) {
+    const auto now = std::chrono::steady_clock::now();
+    if (!plot_start_time_valid_) {
+        plot_start_time_ = now;
+        plot_start_time_valid_ = true;
+    }
+
+    PlotSample sample;
+    sample.time_sec = std::chrono::duration<double>(now - plot_start_time_).count();
+    sample.policy_step = policy_inference_count_;
+    sample.desired_joint_position = desired_joint_position;
+    sample.joint_pos_rel = rl_q_ - q_default_;
+    sample.joint_vel = rl_q_dot_;
+    sample.base_ang_vel = rl_base_ang_vel_;
+    sample.projected_gravity = rl_projected_grav_;
+    sample.motion_joint_pos = rl_motion_q_;
+    sample.motion_anchor_height = latest_motion_frame_.root_position_z;
+    plot_samples_.push_back(sample);
+}
+
+void InferenceModule::writeSvgPlot(const std::filesystem::path &path, const std::string &title, const std::string &y_label,
+                                   const std::function<double(const PlotSample &)> &value_getter) const {
+    if (plot_samples_.empty()) {
+        return;
+    }
+
+    std::filesystem::create_directories(path.parent_path());
+
+    std::vector<std::pair<double, double>> points;
+    points.reserve(plot_samples_.size());
+    double min_t = std::numeric_limits<double>::infinity();
+    double max_t = -std::numeric_limits<double>::infinity();
+    double min_y = std::numeric_limits<double>::infinity();
+    double max_y = -std::numeric_limits<double>::infinity();
+
+    for (const PlotSample &sample : plot_samples_) {
+        const double y = value_getter(sample);
+        if (!std::isfinite(sample.time_sec) || !std::isfinite(y)) {
+            continue;
+        }
+        points.emplace_back(sample.time_sec, y);
+        min_t = std::min(min_t, sample.time_sec);
+        max_t = std::max(max_t, sample.time_sec);
+        min_y = std::min(min_y, y);
+        max_y = std::max(max_y, y);
+    }
+
+    if (points.empty()) {
+        return;
+    }
+
+    if (min_t == max_t) {
+        max_t = min_t + 1.0;
+    }
+    if (min_y == max_y) {
+        const double pad = std::max(1.0e-3, std::abs(min_y) * 0.05);
+        min_y -= pad;
+        max_y += pad;
+    } else {
+        const double pad = (max_y - min_y) * 0.08;
+        min_y -= pad;
+        max_y += pad;
+    }
+
+    constexpr double width = 1200.0;
+    constexpr double height = 700.0;
+    constexpr double left = 92.0;
+    constexpr double right = 28.0;
+    constexpr double top = 58.0;
+    constexpr double bottom = 72.0;
+    constexpr double plot_width = width - left - right;
+    constexpr double plot_height = height - top - bottom;
+    constexpr std::size_t max_plot_points = 10000;
+    const std::size_t step = std::max<std::size_t>(1, (points.size() + max_plot_points - 1) / max_plot_points);
+
+    auto x_coord = [&](double t) {
+        return left + ((t - min_t) / std::max(1.0e-12, max_t - min_t)) * plot_width;
+    };
+    auto y_coord = [&](double y) {
+        return top + (1.0 - ((y - min_y) / std::max(1.0e-12, max_y - min_y))) * plot_height;
+    };
+
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        std::cerr << module_label_ << " failed to open plot file: " << path << "\n";
+        return;
+    }
+
+    file << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    file << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width << "\" height=\"" << height
+         << "\" viewBox=\"0 0 " << width << " " << height << "\">\n";
+    file << "<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>\n";
+    file << "<text x=\"" << (width * 0.5) << "\" y=\"30\" text-anchor=\"middle\" font-family=\"Arial\" font-size=\"22\" fill=\"#111111\">"
+         << EscapeXml(title) << "</text>\n";
+    file << "<text x=\"" << (width * 0.5) << "\" y=\"" << (height - 22)
+         << "\" text-anchor=\"middle\" font-family=\"Arial\" font-size=\"16\" fill=\"#333333\">time [s]</text>\n";
+    file << "<text transform=\"translate(24 " << (height * 0.5)
+         << ") rotate(-90)\" text-anchor=\"middle\" font-family=\"Arial\" font-size=\"16\" fill=\"#333333\">"
+         << EscapeXml(y_label) << "</text>\n";
+
+    for (int i = 0; i <= 5; ++i) {
+        const double gx = left + (plot_width / 5.0) * static_cast<double>(i);
+        const double gy = top + (plot_height / 5.0) * static_cast<double>(i);
+        const double tick_t = min_t + (max_t - min_t) * (static_cast<double>(i) / 5.0);
+        const double tick_y = max_y - (max_y - min_y) * (static_cast<double>(i) / 5.0);
+        file << "<line x1=\"" << gx << "\" y1=\"" << top << "\" x2=\"" << gx << "\" y2=\"" << (top + plot_height)
+             << "\" stroke=\"#e6e6e6\" stroke-width=\"1\"/>\n";
+        file << "<line x1=\"" << left << "\" y1=\"" << gy << "\" x2=\"" << (left + plot_width) << "\" y2=\"" << gy
+             << "\" stroke=\"#e6e6e6\" stroke-width=\"1\"/>\n";
+        file << "<text x=\"" << gx << "\" y=\"" << (top + plot_height + 24)
+             << "\" text-anchor=\"middle\" font-family=\"Arial\" font-size=\"12\" fill=\"#555555\">" << FormatDouble(tick_t, 2)
+             << "</text>\n";
+        file << "<text x=\"" << (left - 10) << "\" y=\"" << (gy + 4)
+             << "\" text-anchor=\"end\" font-family=\"Arial\" font-size=\"12\" fill=\"#555555\">" << FormatDouble(tick_y, 3)
+             << "</text>\n";
+    }
+
+    file << "<rect x=\"" << left << "\" y=\"" << top << "\" width=\"" << plot_width << "\" height=\"" << plot_height
+         << "\" fill=\"none\" stroke=\"#222222\" stroke-width=\"1.5\"/>\n";
+    file << "<polyline fill=\"none\" stroke=\"#0067c5\" stroke-width=\"2\" points=\"";
+    for (std::size_t i = 0; i < points.size(); i += step) {
+        file << FormatDouble(x_coord(points[i].first), 2) << "," << FormatDouble(y_coord(points[i].second), 2) << " ";
+    }
+    if ((points.size() - 1) % step != 0) {
+        const auto &last_point = points.back();
+        file << FormatDouble(x_coord(last_point.first), 2) << "," << FormatDouble(y_coord(last_point.second), 2);
+    }
+    file << "\"/>\n";
+    file << "<text x=\"" << left << "\" y=\"" << (height - 42)
+         << "\" font-family=\"Arial\" font-size=\"12\" fill=\"#555555\">samples=" << points.size()
+         << ", y_min=" << FormatDouble(min_y, 5) << ", y_max=" << FormatDouble(max_y, 5) << "</text>\n";
+    file << "</svg>\n";
+}
+
+void InferenceModule::writeVector23Plots(const std::filesystem::path &directory, const std::string &title_prefix,
+                                         const std::string &y_label,
+                                         const std::function<double(const PlotSample &, Eigen::Index)> &value_getter) const {
+    std::filesystem::create_directories(directory);
+    for (Eigen::Index i = 0; i < kRlNumJointActions; ++i) {
+        std::ostringstream filename;
+        filename << std::setw(2) << std::setfill('0') << i << "_" << SanitizeFileStem(kExpectedJointNames[static_cast<std::size_t>(i)])
+                 << ".svg";
+        const std::string title = title_prefix + " " + kExpectedJointNames[static_cast<std::size_t>(i)];
+        writeSvgPlot(directory / filename.str(), title, y_label, [&, i](const PlotSample &sample) { return value_getter(sample, i); });
+    }
+}
+
+void InferenceModule::writePlotFiles(const std::string &root_dir) const {
+    const std::filesystem::path root(root_dir);
+    const std::filesystem::path action_dir = root / "action";
+    const std::filesystem::path state_dir = root / "state";
+    const std::filesystem::path base_ang_vel_dir = state_dir / "base_ang_vel";
+    const std::filesystem::path projected_gravity_dir = state_dir / "projected_gravity";
+    const std::filesystem::path motion_anchor_height_dir = state_dir / "motion_anchor_height";
+
+    std::filesystem::create_directories(action_dir);
+    std::filesystem::create_directories(state_dir / "joint_pos_rel");
+    std::filesystem::create_directories(state_dir / "joint_vel");
+    std::filesystem::create_directories(base_ang_vel_dir);
+    std::filesystem::create_directories(projected_gravity_dir);
+    std::filesystem::create_directories(state_dir / "motion_joint_pos");
+    std::filesystem::create_directories(motion_anchor_height_dir);
+
+    if (plot_samples_.empty()) {
+        std::cerr << module_label_ << " no policy samples recorded; plot directories created at " << root << "\n";
+        return;
+    }
+
+    writeVector23Plots(action_dir, "desired_joint_position", "rad", [](const PlotSample &sample, Eigen::Index i) {
+        return sample.desired_joint_position(i);
+    });
+    writeVector23Plots(state_dir / "joint_pos_rel", "joint_pos_rel", "rad", [](const PlotSample &sample, Eigen::Index i) {
+        return sample.joint_pos_rel(i);
+    });
+    writeVector23Plots(state_dir / "joint_vel", "joint_vel", "rad/s", [](const PlotSample &sample, Eigen::Index i) {
+        return sample.joint_vel(i);
+    });
+    writeVector23Plots(state_dir / "motion_joint_pos", "motion_joint_pos", "rad", [](const PlotSample &sample, Eigen::Index i) {
+        return sample.motion_joint_pos(i);
+    });
+
+    writeSvgPlot(base_ang_vel_dir / "x.svg", "base_ang_vel x", "rad/s", [](const PlotSample &sample) {
+        return sample.base_ang_vel(0);
+    });
+    writeSvgPlot(base_ang_vel_dir / "y.svg", "base_ang_vel y", "rad/s", [](const PlotSample &sample) {
+        return sample.base_ang_vel(1);
+    });
+    writeSvgPlot(base_ang_vel_dir / "z.svg", "base_ang_vel z", "rad/s", [](const PlotSample &sample) {
+        return sample.base_ang_vel(2);
+    });
+    writeSvgPlot(projected_gravity_dir / "x.svg", "projected_gravity x", "unit gravity", [](const PlotSample &sample) {
+        return sample.projected_gravity(0);
+    });
+    writeSvgPlot(projected_gravity_dir / "y.svg", "projected_gravity y", "unit gravity", [](const PlotSample &sample) {
+        return sample.projected_gravity(1);
+    });
+    writeSvgPlot(projected_gravity_dir / "z.svg", "projected_gravity z", "unit gravity", [](const PlotSample &sample) {
+        return sample.projected_gravity(2);
+    });
+    writeSvgPlot(motion_anchor_height_dir / "motion_anchor_height.svg", "motion_anchor_height", "m", [](const PlotSample &sample) {
+        return sample.motion_anchor_height;
+    });
+
+    std::cerr << module_label_ << " wrote " << plot_samples_.size() << " policy samples to plots under " << root << "\n";
 }
 
 void InferenceModule::resetPolicyState() {
@@ -946,7 +1260,7 @@ InferenceModule::ObservationLayout InferenceModule::detectObservationLayout(std:
 
 Vector23d InferenceModule::composeTargetJointPositions() const {
     if (config_.use_motion_residual_action) {
-        return q_default_ + rl_motion_q_ + rl_actions_.cwiseProduct(action_scale_);
+        return rl_motion_q_ + rl_actions_.cwiseProduct(action_scale_);
     }
     return q_default_ + rl_actions_.cwiseProduct(action_scale_);
 }

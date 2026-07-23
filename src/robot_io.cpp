@@ -58,11 +58,18 @@ bool RobotIo::waitForFirstState(std::chrono::milliseconds timeout) {
 }
 
 bool RobotIo::snapshotState(igris_c::msg::dds::LowState &state) const {
+    return snapshotState(state, nullptr);
+}
+
+bool RobotIo::snapshotState(igris_c::msg::dds::LowState &state, uint64_t *sequence) const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     if (!has_state_) {
         return false;
     }
     state = latest_state_;
+    if (sequence != nullptr) {
+        *sequence = state_seq_;
+    }
     return true;
 }
 
@@ -95,6 +102,7 @@ void RobotIo::lowStateCallback(const igris_c::msg::dds::LowState &state) {
         first_state  = !has_state_;
         latest_state_ = state;
         has_state_    = true;
+        ++state_seq_;
     }
     if (first_state) {
         std::cerr << "RobotIo received first LowState\n";

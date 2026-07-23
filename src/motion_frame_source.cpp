@@ -26,6 +26,22 @@ bool MotionFrameSource::getLatestStack(std::vector<MotionFrame> &frames, std::si
     return true;
 }
 
+bool MotionFrameSource::getFrameAtStep(std::size_t step, MotionFrame &frame) {
+    (void)step;
+    return getLatest(frame);
+}
+
+bool MotionFrameSource::getFrameStackAtStep(std::size_t step, std::vector<MotionFrame> &frames, std::size_t length) {
+    frames.clear();
+    MotionFrame frame;
+    if (length == 0 || !getFrameAtStep(step, frame)) {
+        return false;
+    }
+
+    frames.assign(length, frame);
+    return true;
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -258,20 +274,54 @@ class CsvReplayMotionFrameSource : public MotionFrameSource {
         const auto elapsed_frames =
             static_cast<std::size_t>(std::max(0.0, elapsed_sec * config_.fps));
 
-        std::size_t index = elapsed_frames;
-        if (config_.loop) {
-            index %= frames_.size();
-        } else if (index >= frames_.size()) {
-            index = frames_.size() - 1;
+        const std::size_t index = frameIndexForStep(elapsed_frames);
+        frame = frames_[index];
+        return true;
+    }
+
+    bool getFrameAtStep(std::size_t step, MotionFrame &frame) override {
+        if (frames_.empty()) {
+            return false;
         }
 
-        frame = frames_[index];
+        frame          = frames_[frameIndexForStep(step)];
+        frame.seq      = static_cast<uint64_t>(step);
+        frame.stamp_ns = stampForStep(step);
+        return true;
+    }
+
+    bool getFrameStackAtStep(std::size_t step, std::vector<MotionFrame> &frames, std::size_t length) override {
+        frames.clear();
+        if (length == 0 || frames_.empty()) {
+            return false;
+        }
+
+        frames.reserve(length);
+        for (std::size_t i = 0; i < length; ++i) {
+            MotionFrame frame;
+            if (!getFrameAtStep(step + i, frame)) {
+                return false;
+            }
+            frames.push_back(frame);
+        }
         return true;
     }
 
     void reset() override { start_time_ = std::chrono::steady_clock::now(); }
 
   private:
+    std::size_t frameIndexForStep(std::size_t step) const {
+        if (config_.loop) {
+            return step % frames_.size();
+        }
+        return std::min(step, frames_.size() - 1);
+    }
+
+    uint64_t stampForStep(std::size_t step) const {
+        const double time_sec = static_cast<double>(step) / config_.fps;
+        return static_cast<uint64_t>(std::max(0.0, time_sec) * 1000000000.0);
+    }
+
     MotionSourceConfig config_;
     std::vector<MotionFrame> frames_;
     std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
@@ -307,12 +357,7 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
         const auto elapsed_frames =
             static_cast<std::size_t>(std::max(0.0, elapsed_sec * fps_));
 
-        std::size_t frame_index = elapsed_frames;
-        if (config_.loop) {
-            frame_index %= num_frames_;
-        } else if (frame_index >= num_frames_) {
-            frame_index = num_frames_ - 1;
-        }
+        const std::size_t frame_index = frameIndexForStep(elapsed_frames);
 
         if (!cached_frame_valid_ || frame_index != cached_frame_index_) {
             cached_frame_       = runFrame(frame_index);
@@ -340,16 +385,43 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
 
         frames.reserve(length);
         for (std::size_t i = 0; i < length; ++i) {
-            std::size_t frame_index = elapsed_frames + i;
-            if (config_.loop) {
-                frame_index %= num_frames_;
-            } else if (frame_index >= num_frames_) {
-                frame_index = num_frames_ - 1;
-            }
+            const std::size_t step = elapsed_frames + i;
+            const std::size_t frame_index = frameIndexForStep(step);
 
             MotionFrame frame = runFrame(frame_index);
-            frame.seq = elapsed_frames + i;
+            frame.seq = step;
             frame.stamp_ns = stamp_ns;
+            frames.push_back(frame);
+        }
+        return true;
+    }
+
+    bool getFrameAtStep(std::size_t step, MotionFrame &frame) override {
+        const std::size_t frame_index = frameIndexForStep(step);
+        if (!cached_frame_valid_ || frame_index != cached_frame_index_) {
+            cached_frame_       = runFrame(frame_index);
+            cached_frame_index_ = frame_index;
+            cached_frame_valid_ = true;
+        }
+
+        frame          = cached_frame_;
+        frame.seq      = static_cast<uint64_t>(step);
+        frame.stamp_ns = stampForStep(step);
+        return true;
+    }
+
+    bool getFrameStackAtStep(std::size_t step, std::vector<MotionFrame> &frames, std::size_t length) override {
+        frames.clear();
+        if (length == 0) {
+            return false;
+        }
+
+        frames.reserve(length);
+        for (std::size_t i = 0; i < length; ++i) {
+            const std::size_t frame_step = step + i;
+            MotionFrame frame = runFrame(frameIndexForStep(frame_step));
+            frame.seq         = static_cast<uint64_t>(frame_step);
+            frame.stamp_ns    = stampForStep(frame_step);
             frames.push_back(frame);
         }
         return true;
@@ -362,6 +434,18 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
     }
 
   private:
+    std::size_t frameIndexForStep(std::size_t step) const {
+        if (config_.loop) {
+            return step % num_frames_;
+        }
+        return std::min(step, num_frames_ - 1);
+    }
+
+    uint64_t stampForStep(std::size_t step) const {
+        const double time_sec = static_cast<double>(step) / fps_;
+        return static_cast<uint64_t>(std::max(0.0, time_sec) * 1000000000.0);
+    }
+
     void loadTensorInfo() {
         if (session_->GetInputCount() != 1) {
             throw std::runtime_error("Motion ONNX must have exactly one input tensor");

@@ -15,6 +15,8 @@ class MotionFrameSource {
 
     virtual bool getLatest(MotionFrame &frame) = 0;
     virtual bool getLatestStack(std::vector<MotionFrame> &frames, std::size_t length);
+    virtual bool getFrameAtStep(std::size_t step, MotionFrame &frame);
+    virtual bool getFrameStackAtStep(std::size_t step, std::vector<MotionFrame> &frames, std::size_t length);
     virtual void reset()                       = 0;
 };
 

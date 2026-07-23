@@ -10,6 +10,9 @@
 #include <Eigen/Dense>
 
 #include <array>
+#include <chrono>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,6 +29,8 @@ class InferenceModule {
     int loadConfig(const InferenceConfig &config);
     int reset(const igris_c::msg::dds::LowState &state, const MotionDataSample *motion_data_sample);
     int compute(const igris_c::msg::dds::LowState &state, const MotionDataSample *motion_data_sample, InferenceCommand &command);
+    int runPolicyStep(const igris_c::msg::dds::LowState &state, const MotionDataSample *motion_data_sample,
+                      InferenceCommand &command);
 
     void buildHoldCommand(const igris_c::msg::dds::LowState &state, InferenceCommand &command) const;
     std::shared_ptr<MotionDataBuffer> getMotionDataBuffer() const { return motion_data_buffer_; }
@@ -34,6 +39,7 @@ class InferenceModule {
     }
     double lastPolicyInferenceMs() const { return last_policy_inference_ms_; }
     uint64_t policyInferenceCount() const { return policy_inference_count_; }
+    void writePlotFiles(const std::string &root_dir) const;
 
   private:
     struct ObservationHistory {
@@ -57,7 +63,25 @@ class InferenceModule {
         GeneralMotionTracking,
     };
 
+    struct PlotSample {
+        double time_sec = 0.0;
+        uint64_t policy_step = 0;
+        Vector23d desired_joint_position = Vector23d::Zero();
+        Vector23d joint_pos_rel = Vector23d::Zero();
+        Vector23d joint_vel = Vector23d::Zero();
+        Eigen::Vector3d base_ang_vel = Eigen::Vector3d::Zero();
+        Eigen::Vector3d projected_gravity = Eigen::Vector3d::Zero();
+        Vector23d motion_joint_pos = Vector23d::Zero();
+        double motion_anchor_height = 0.0;
+    };
+
     void initializeRlState();
+    void resetPlotRecorder();
+    void recordPlotSample(const Vector23d &desired_joint_position);
+    void writeSvgPlot(const std::filesystem::path &path, const std::string &title, const std::string &y_label,
+                      const std::function<double(const PlotSample &)> &value_getter) const;
+    void writeVector23Plots(const std::filesystem::path &directory, const std::string &title_prefix, const std::string &y_label,
+                            const std::function<double(const PlotSample &, Eigen::Index)> &value_getter) const;
     void resetPolicyState();
     int computePolicy();
     bool buildMotionFrameFromMotionData(const MotionDataSample &motion_data_sample, MotionFrame &motion_frame) const;
@@ -113,6 +137,9 @@ class InferenceModule {
 
     MotionFrame latest_motion_frame_;
     std::vector<MotionFrame> latest_motion_frame_stack_;
+    std::vector<PlotSample> plot_samples_;
+    std::chrono::steady_clock::time_point plot_start_time_{};
+    bool plot_start_time_valid_ = false;
 
     size_t onnx_input_number_  = 0;
     size_t onnx_output_number_ = 0;

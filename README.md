@@ -137,10 +137,10 @@ models/wbc_teleop/0721/policy.onnx
 We included one WBC model trained on our side, so the default config should run as-is.
 You may freely change the MDP setup, observation/action layout, and model checkpoint as needed, as long as the ONNX model and C++ inference layout stay consistent.
 
-Build from the Isaac workspace:
+Build from the ROS workspace:
 
 ```bash
-cd /home/robros/isaac_ws
+cd /home/robros/workspace
 source /home/robros/workspace/install/setup.bash
 colcon build --packages-select public_inference_module
 ```
@@ -149,11 +149,20 @@ Run recorded ONNX motion replay:
 
 ```bash
 source /home/robros/workspace/install/setup.bash
-source /home/robros/isaac_ws/install/setup.bash
 ros2 run public_inference_module public_inference_module_node \
-  --config /home/robros/isaac_ws/public_inference_module/config/params.yaml \
+  --config /home/robros/workspace/src/public_inference_module/config/params.yaml \
   --namespace igris_c_<your namespace>
 ```
+
+## Plot Logs
+
+On clean shutdown, the node writes SVG plots to:
+
+```text
+/home/robros/workspace/src/public_inference_module/log/plot
+```
+
+The output contains `action/` plots for each final desired joint position sent in the 23-dimensional action joint order and `state/` plots for `joint_pos_rel`, `joint_vel`, `base_ang_vel`, `projected_gravity`, `motion_joint_pos`, and `motion_anchor_height`.
 
 Overall execution order:
 
