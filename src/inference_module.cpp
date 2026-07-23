@@ -64,6 +64,17 @@ std::array<double, kRlNumReferenceRootStateObs> RootStateFromReferenceQuaternion
             reference_root_state(1, 1), reference_root_state(2, 0), reference_root_state(2, 1)};
 }
 
+std::array<double, kGmtNumMotionAnchorOrientationObs> MotionAnchorOrientationFromReferenceQuaternion(
+    const igris_c::msg::dds::LowState &state, const std::array<double, 4> &reference_quaternion_wxyz) {
+    const Eigen::Quaterniond robot_anchor_world(ComputeBaseLinkRotm(state));
+    Eigen::Quaterniond reference_anchor_world(reference_quaternion_wxyz[0], reference_quaternion_wxyz[1],
+                                              reference_quaternion_wxyz[2], reference_quaternion_wxyz[3]);
+    reference_anchor_world.normalize();
+    const Eigen::Matrix3d reference_root_state = (robot_anchor_world.conjugate() * reference_anchor_world).toRotationMatrix();
+    return {reference_root_state(0, 0), reference_root_state(0, 1), reference_root_state(1, 0),
+            reference_root_state(1, 1), reference_root_state(2, 0), reference_root_state(2, 1)};
+}
+
 Eigen::Vector3d ComputeProjectedGravity(const igris_c::msg::dds::LowState &state) {
     static const Eigen::Vector3d kWorldGravity(0.0, 0.0, -1.0);
     return ComputeBaseLinkRotm(state).transpose() * kWorldGravity;
@@ -111,6 +122,9 @@ std::vector<int64_t> NormalizeTensorShape(std::vector<int64_t> shape) {
 }
 
 std::vector<int64_t> ObservationTensorShape(const std::string &layout) {
+    if (layout == "general_motion_tracking_v1") {
+        return {1, kGmtNumObsHistory};
+    }
     if (layout == "reference_tracking_v1") {
         return {1, kRlNumReferenceTrackingObs};
     }
@@ -274,14 +288,20 @@ int InferenceModule::loadConfig(const InferenceConfig &config) {
                     observation_layout_ = detectObservationLayout(element_count);
                     rl_obs_input_size_  = element_count;
                     rl_obs_flat_.setZero(static_cast<Eigen::Index>(rl_obs_input_size_));
-                    std::cerr << module_label_ << " observation layout="
-                              << (observation_layout_ == ObservationLayout::ReferenceTracking ? "reference_tracking" : "legacy_history")
+                    std::string observation_layout_name = "legacy_history";
+                    if (observation_layout_ == ObservationLayout::ReferenceTracking) {
+                        observation_layout_name = "reference_tracking";
+                    } else if (observation_layout_ == ObservationLayout::GeneralMotionTracking) {
+                        observation_layout_name = "general_motion_tracking";
+                    }
+                    std::cerr << module_label_ << " observation layout=" << observation_layout_name
                               << " history_len=" << rl_obs_history_len_
                               << " reference_stack_len=" << rl_reference_frame_stack_len_ << "\n";
                 } catch (const std::invalid_argument &) {
                     std::cerr << module_label_ << " unsupported obs size " << element_count << ". Legacy obs must be N * "
                               << kRlNumObsCurrent << "; reference_tracking_v1 obs must be exactly "
-                              << kRlNumReferenceTrackingObs << ".\n";
+                              << kRlNumReferenceTrackingObs << "; general_motion_tracking_v1 obs must be N * "
+                              << kGmtNumObsCurrent << ".\n";
                     return -1;
                 }
             }
@@ -351,6 +371,51 @@ int InferenceModule::compute(const igris_c::msg::dds::LowState &state, const Mot
 bool InferenceModule::buildMotionFrameFromMotionData(const MotionDataSample &motion_data_sample, MotionFrame &motion_frame) const {
     if (!motion_data_sample.valid) {
         return false;
+    }
+
+    if (config_.motion_source.layout == "general_motion_tracking_v1") {
+        if (motion_data_sample.values.size() < static_cast<std::size_t>(kMotionDataGmtValues)) {
+            std::cerr << module_label_ << " motion data payload too small for general_motion_tracking_v1 layout. size="
+                      << motion_data_sample.values.size() << "\n";
+            return false;
+        }
+
+        motion_frame = MotionFrame{};
+        motion_frame.seq      = motion_data_sample.seq;
+        motion_frame.stamp_ns = motion_data_sample.stamp_ns;
+        motion_frame.valid    = true;
+        motion_frame.anchor_quaternion_valid = motion_data_sample.anchor_quaternion_valid;
+        if (motion_frame.anchor_quaternion_valid) {
+            motion_frame.anchor_quaternion_wxyz = motion_data_sample.anchor_quaternion_wxyz;
+        }
+
+        std::size_t offset = 0;
+        for (std::size_t i = 0; i < motion_frame.joint_position.size(); ++i) {
+            motion_frame.joint_position[i] = motion_data_sample.values[offset + i];
+        }
+        offset += motion_frame.joint_position.size();
+        for (std::size_t i = 0; i < motion_frame.gmt_body_position.size(); ++i) {
+            motion_frame.gmt_body_position[i] = motion_data_sample.values[offset + i];
+        }
+        offset += motion_frame.gmt_body_position.size();
+        for (std::size_t i = 0; i < motion_frame.root_linear_velocity.size(); ++i) {
+            motion_frame.root_linear_velocity[i] = motion_data_sample.values[offset + i];
+        }
+        offset += motion_frame.root_linear_velocity.size();
+        for (std::size_t i = 0; i < motion_frame.root_angular_velocity.size(); ++i) {
+            motion_frame.root_angular_velocity[i] = motion_data_sample.values[offset + i];
+        }
+        offset += motion_frame.root_angular_velocity.size();
+        motion_frame.root_position_z = motion_data_sample.values[offset++];
+
+        if (!motion_frame.anchor_quaternion_valid &&
+            motion_data_sample.values.size() >= static_cast<std::size_t>(kMotionDataGmtValuesWithAnchor)) {
+            for (std::size_t i = 0; i < motion_frame.anchor_quaternion_wxyz.size(); ++i) {
+                motion_frame.anchor_quaternion_wxyz[i] = motion_data_sample.values[offset + i];
+            }
+            motion_frame.anchor_quaternion_valid = true;
+        }
+        return motion_frame.anchor_quaternion_valid;
     }
 
     if (config_.motion_source.layout == "reference_tracking_v1") {
@@ -612,16 +677,18 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
         const int joint_index  = kObsToSystemJointMapping[i];
         rl_q_(static_cast<Eigen::Index>(i)) = static_cast<double>(state.joint_state()[static_cast<std::size_t>(joint_index)].q());
         rl_q_dot_(static_cast<Eigen::Index>(i)) = joint_velocity_lpf_(joint_index);
-        if (config_.zero_proprioception_ankle_velocity && isAnkleObservationJoint(joint_index)) {
-            rl_q_dot_(static_cast<Eigen::Index>(i)) = 0.0;
-        }
         rl_motion_q_(static_cast<Eigen::Index>(i)) = motion_frame.joint_position[i];
         rl_motion_q_dot_(static_cast<Eigen::Index>(i)) = motion_frame.joint_velocity[i];
     }
 
     for (MotionFrame &reference_frame : motion_frames) {
         if (reference_frame.anchor_quaternion_valid) {
-            reference_frame.root_state = RootStateFromReferenceQuaternion(state, reference_frame.anchor_quaternion_wxyz);
+            if (observation_layout_ == ObservationLayout::GeneralMotionTracking) {
+                reference_frame.gmt_anchor_orientation =
+                    MotionAnchorOrientationFromReferenceQuaternion(state, reference_frame.anchor_quaternion_wxyz);
+            } else {
+                reference_frame.root_state = RootStateFromReferenceQuaternion(state, reference_frame.anchor_quaternion_wxyz);
+            }
         }
     }
     motion_frame = motion_frames.front();
@@ -633,6 +700,11 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
     struct ObservationSample {
         Eigen::VectorXd motion_joint_position;
         Eigen::VectorXd motion_joint_velocity;
+        Eigen::VectorXd motion_body_position;
+        Eigen::VectorXd motion_anchor_linear_velocity;
+        Eigen::VectorXd motion_anchor_angular_velocity;
+        Eigen::VectorXd motion_anchor_orientation;
+        Eigen::VectorXd motion_anchor_height;
         Eigen::VectorXd base_angular_velocity;
         Eigen::VectorXd projected_gravity;
         Eigen::VectorXd joint_position;
@@ -644,6 +716,13 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
         ObservationSample sample;
         sample.motion_joint_position = ToVectorXd(rl_motion_q_);
         sample.motion_joint_velocity = ToVectorXd(rl_motion_q_dot_);
+        sample.motion_body_position = ToVectorXd(latest_motion_frame_.gmt_body_position);
+        sample.motion_anchor_linear_velocity = ToVectorXd(latest_motion_frame_.root_linear_velocity);
+        sample.motion_anchor_angular_velocity = ToVectorXd(latest_motion_frame_.root_angular_velocity);
+        sample.motion_anchor_orientation = ToVectorXd(latest_motion_frame_.gmt_anchor_orientation);
+        Eigen::VectorXd motion_anchor_height(1);
+        motion_anchor_height(0) = latest_motion_frame_.root_position_z;
+        sample.motion_anchor_height = motion_anchor_height;
         sample.base_angular_velocity = ToVectorXd(rl_base_ang_vel_);
         sample.projected_gravity     = ToVectorXd(rl_projected_grav_);
         sample.joint_position        = ToVectorXd(rl_q_ - q_default_);
@@ -656,6 +735,11 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
         const ObservationSample sample = build_sample();
         obs_history_.motion_joint_pos.init(rl_obs_history_len_, sample.motion_joint_position);
         obs_history_.motion_joint_vel.init(rl_obs_history_len_, sample.motion_joint_velocity);
+        obs_history_.motion_body_pos.init(rl_obs_history_len_, sample.motion_body_position);
+        obs_history_.motion_anchor_lin_vel.init(rl_obs_history_len_, sample.motion_anchor_linear_velocity);
+        obs_history_.motion_anchor_ang_vel.init(rl_obs_history_len_, sample.motion_anchor_angular_velocity);
+        obs_history_.motion_anchor_ori.init(rl_obs_history_len_, sample.motion_anchor_orientation);
+        obs_history_.motion_anchor_height.init(rl_obs_history_len_, sample.motion_anchor_height);
         obs_history_.base_ang_vel.init(rl_obs_history_len_, sample.base_angular_velocity);
         obs_history_.projected_gravity.init(rl_obs_history_len_, sample.projected_gravity);
         obs_history_.joint_pos.init(rl_obs_history_len_, sample.joint_position);
@@ -667,6 +751,11 @@ int InferenceModule::updateObservationBuffer(const igris_c::msg::dds::LowState &
     const ObservationSample sample = build_sample();
     obs_history_.motion_joint_pos.push_back(sample.motion_joint_position);
     obs_history_.motion_joint_vel.push_back(sample.motion_joint_velocity);
+    obs_history_.motion_body_pos.push_back(sample.motion_body_position);
+    obs_history_.motion_anchor_lin_vel.push_back(sample.motion_anchor_linear_velocity);
+    obs_history_.motion_anchor_ang_vel.push_back(sample.motion_anchor_angular_velocity);
+    obs_history_.motion_anchor_ori.push_back(sample.motion_anchor_orientation);
+    obs_history_.motion_anchor_height.push_back(sample.motion_anchor_height);
     obs_history_.base_ang_vel.push_back(sample.base_angular_velocity);
     obs_history_.projected_gravity.push_back(sample.projected_gravity);
     obs_history_.joint_pos.push_back(sample.joint_position);
@@ -684,6 +773,8 @@ int InferenceModule::updateFlattenedObservation() {
         return updateLegacyFlattenedObservation();
     case ObservationLayout::ReferenceTracking:
         return updateReferenceTrackingFlattenedObservation();
+    case ObservationLayout::GeneralMotionTracking:
+        return updateGeneralMotionTrackingFlattenedObservation();
     }
     return -1;
 }
@@ -762,9 +853,6 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
         for (std::size_t i = 0; i < frame.joint_position.size(); ++i) {
             value(static_cast<Eigen::Index>(i)) = frame.joint_position[i];
         }
-        if (config_.zero_reference_motion_ankle_position) {
-            zeroAnkleObservationJoints(value);
-        }
         return ToVectorXd(value);
     };
     const auto joint_velocity = [](const MotionFrame &frame) { return ToVectorXd(frame.joint_velocity); };
@@ -794,7 +882,51 @@ int InferenceModule::updateReferenceTrackingFlattenedObservation() {
     return 0;
 }
 
+int InferenceModule::updateGeneralMotionTrackingFlattenedObservation() {
+    if (onnx_input_obs_index_ < 0 || onnx_input_states_buffer_.empty()) {
+        return -1;
+    }
+
+    const Eigen::VectorXd motion_joint_position_vec = obs_history_.motion_joint_pos.toEigenVector();
+    const Eigen::VectorXd motion_body_position_vec  = obs_history_.motion_body_pos.toEigenVector();
+    const Eigen::VectorXd motion_anchor_lin_vel_vec = obs_history_.motion_anchor_lin_vel.toEigenVector();
+    const Eigen::VectorXd motion_anchor_ang_vel_vec = obs_history_.motion_anchor_ang_vel.toEigenVector();
+    const Eigen::VectorXd motion_anchor_ori_vec     = obs_history_.motion_anchor_ori.toEigenVector();
+    const Eigen::VectorXd motion_anchor_height_vec  = obs_history_.motion_anchor_height.toEigenVector();
+    const Eigen::VectorXd base_ang_vel_vec          = obs_history_.base_ang_vel.toEigenVector();
+    const Eigen::VectorXd projected_gravity_vec     = obs_history_.projected_gravity.toEigenVector();
+    const Eigen::VectorXd joint_position_vec        = obs_history_.joint_pos.toEigenVector();
+    const Eigen::VectorXd joint_velocity_vec        = obs_history_.joint_vel.toEigenVector();
+    const Eigen::VectorXd actions_vec               = obs_history_.actions.toEigenVector();
+
+    const Eigen::Index flat_size =
+        motion_joint_position_vec.size() + motion_body_position_vec.size() + motion_anchor_lin_vel_vec.size() +
+        motion_anchor_ang_vel_vec.size() + motion_anchor_ori_vec.size() + motion_anchor_height_vec.size() + base_ang_vel_vec.size() +
+        projected_gravity_vec.size() + joint_position_vec.size() + joint_velocity_vec.size() + actions_vec.size();
+    if (flat_size != static_cast<Eigen::Index>(rl_obs_input_size_)) {
+        std::cerr << module_label_ << " general motion tracking observation size mismatch. expected=" << rl_obs_input_size_
+                  << " actual=" << flat_size << "\n";
+        return -1;
+    }
+
+    rl_obs_flat_.resize(static_cast<Eigen::Index>(rl_obs_input_size_));
+    rl_obs_flat_ << motion_joint_position_vec, motion_body_position_vec, motion_anchor_lin_vel_vec, motion_anchor_ang_vel_vec,
+        motion_anchor_ori_vec, motion_anchor_height_vec, base_ang_vel_vec, projected_gravity_vec, joint_position_vec, joint_velocity_vec,
+        actions_vec;
+
+    std::copy(rl_obs_flat_.data(), rl_obs_flat_.data() + static_cast<Eigen::Index>(rl_obs_input_size_),
+              onnx_input_states_buffer_[onnx_input_obs_index_].begin());
+    return 0;
+}
+
 InferenceModule::ObservationLayout InferenceModule::detectObservationLayout(std::size_t obs_size) {
+    if (obs_size >= static_cast<std::size_t>(kGmtNumObsCurrent) && (obs_size % static_cast<std::size_t>(kGmtNumObsCurrent)) == 0 &&
+        (config_.motion_source.layout == "general_motion_tracking_v1" || obs_size == static_cast<std::size_t>(kGmtNumObsHistory))) {
+        rl_obs_history_len_           = obs_size / static_cast<std::size_t>(kGmtNumObsCurrent);
+        rl_reference_frame_stack_len_ = kRlReferenceFrameStackLength;
+        return ObservationLayout::GeneralMotionTracking;
+    }
+
     if (obs_size >= static_cast<std::size_t>(kRlNumObsCurrent) && (obs_size % static_cast<std::size_t>(kRlNumObsCurrent)) == 0) {
         rl_obs_history_len_              = obs_size / static_cast<std::size_t>(kRlNumObsCurrent);
         rl_reference_frame_stack_len_    = kRlReferenceFrameStackLength;
@@ -877,18 +1009,6 @@ void InferenceModule::processTargetPositions(const igris_c::msg::dds::LowState &
 bool InferenceModule::isParallelJoint(int joint_index) {
     return joint_index == TM1_WR || joint_index == TM1_WP || joint_index == TM1_LAP || joint_index == TM1_LAR || joint_index == TM1_RAP ||
            joint_index == TM1_RAR;
-}
-
-bool InferenceModule::isAnkleObservationJoint(int joint_index) {
-    return joint_index == TM1_LAP || joint_index == TM1_LAR || joint_index == TM1_RAP || joint_index == TM1_RAR;
-}
-
-void InferenceModule::zeroAnkleObservationJoints(Vector23d &joint_position) {
-    for (std::size_t i = 0; i < kObsToSystemJointMapping.size(); ++i) {
-        if (isAnkleObservationJoint(kObsToSystemJointMapping[i])) {
-            joint_position(static_cast<Eigen::Index>(i)) = 0.0;
-        }
-    }
 }
 
 }  // namespace public_inference_module

@@ -51,6 +51,16 @@ inline MotionDataSample EncodeMotionFrameAsMotionData(const MotionFrame &frame, 
         return sample;
     }
 
+    if (layout == "general_motion_tracking_v1") {
+        sample.values.reserve(kMotionDataGmtValues);
+        sample.values.insert(sample.values.end(), frame.joint_position.begin(), frame.joint_position.end());
+        sample.values.insert(sample.values.end(), frame.gmt_body_position.begin(), frame.gmt_body_position.end());
+        sample.values.insert(sample.values.end(), frame.root_linear_velocity.begin(), frame.root_linear_velocity.end());
+        sample.values.insert(sample.values.end(), frame.root_angular_velocity.begin(), frame.root_angular_velocity.end());
+        sample.values.push_back(frame.root_position_z);
+        return sample;
+    }
+
     sample.values.reserve(kMotionDataReferenceTrackingValues);
     sample.values.insert(sample.values.end(), frame.joint_position.begin(), frame.joint_position.end());
     sample.values.insert(sample.values.end(), frame.joint_velocity.begin(), frame.joint_velocity.end());

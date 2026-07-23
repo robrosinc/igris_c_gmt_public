@@ -71,6 +71,23 @@ inline constexpr int kMotionDataReferenceTrackingValuesWithAnchor = kMotionDataR
 inline constexpr int kRlNumReferenceNonHistory = kRlReferenceFrameStackLength * kMotionDataReferenceTrackingValues;
 inline constexpr int kRlNumReferenceTrackingObs = kRlReferenceObsHistoryLen * kRlNumReferenceHistoryCurrent + kRlNumReferenceNonHistory;
 
+inline constexpr int kGmtResolvedBodyCount             = 13;
+inline constexpr int kGmtNumMotionBodyPositionObs      = kGmtResolvedBodyCount * 3;
+inline constexpr int kGmtNumMotionAnchorLinearVelObs   = 3;
+inline constexpr int kGmtNumMotionAnchorAngularVelObs  = 3;
+inline constexpr int kGmtNumMotionAnchorOrientationObs = 6;
+inline constexpr int kGmtNumMotionAnchorHeightObs      = 1;
+inline constexpr int kGmtNumObsCurrent = kRlNumMotionJointPositionObs + kGmtNumMotionBodyPositionObs +
+                                         kGmtNumMotionAnchorLinearVelObs + kGmtNumMotionAnchorAngularVelObs +
+                                         kGmtNumMotionAnchorOrientationObs + kGmtNumMotionAnchorHeightObs +
+                                         kRlNumBaseAngularVelocityObs + kRlNumProjectedGravityObs + kRlNumJointPositionObs +
+                                         kRlNumJointVelocityObs + kRlNumLastActionsObs;
+inline constexpr int kGmtNumObsHistory         = kRlObsHistoryLen * kGmtNumObsCurrent;
+inline constexpr int kMotionDataGmtValues      = kRlNumMotionJointPositionObs + kGmtNumMotionBodyPositionObs +
+                                            kGmtNumMotionAnchorLinearVelObs + kGmtNumMotionAnchorAngularVelObs +
+                                            kGmtNumMotionAnchorHeightObs;
+inline constexpr int kMotionDataGmtValuesWithAnchor = kMotionDataGmtValues + 4;
+
 using VectorQd  = Eigen::Matrix<double, kModelDof, 1>;
 using Vector23d = Eigen::Matrix<double, kRlNumJointActions, 1>;
 
@@ -102,6 +119,8 @@ struct MotionFrame {
     double root_position_z = 0.0;
     std::array<double, kRlNumReferenceRootStateObs> root_state{};
     std::array<double, kRlNumReferenceBodyPositionObs> body_position{};
+    std::array<double, kGmtNumMotionBodyPositionObs> gmt_body_position{};
+    std::array<double, kGmtNumMotionAnchorOrientationObs> gmt_anchor_orientation{};
     std::array<double, kRlNumReferenceRootLinearVelocityObs> root_linear_velocity{};
     std::array<double, kRlNumReferenceRootAngularVelocityObs> root_angular_velocity{};
     std::array<double, 4> anchor_quaternion_wxyz{1.0, 0.0, 0.0, 0.0};
@@ -109,6 +128,7 @@ struct MotionFrame {
 
     MotionFrame() {
         root_state = {1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+        gmt_anchor_orientation = {1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
     }
 };
 

@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
             ros_motion_buffer = std::make_shared<public_inference_module::MotionDataBuffer>();
             ros_motion_receiver = std::make_unique<public_inference_module::RosMotionReceiver>(ros_motion_buffer);
             std::cerr << "Starting ROS motion receiver\n";
-            if (!ros_motion_receiver->start(ros_config)) {
+            if (!ros_motion_receiver->start(ros_config, config.motion_source.layout)) {
                 throw std::runtime_error("Failed to start ROS 2 motion receiver");
             }
             std::cerr << "ROS motion receiver started\n";

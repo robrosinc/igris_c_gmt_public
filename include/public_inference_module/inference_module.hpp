@@ -39,6 +39,11 @@ class InferenceModule {
     struct ObservationHistory {
         RollingHistory motion_joint_pos;
         RollingHistory motion_joint_vel;
+        RollingHistory motion_body_pos;
+        RollingHistory motion_anchor_lin_vel;
+        RollingHistory motion_anchor_ang_vel;
+        RollingHistory motion_anchor_ori;
+        RollingHistory motion_anchor_height;
         RollingHistory base_ang_vel;
         RollingHistory projected_gravity;
         RollingHistory joint_pos;
@@ -49,6 +54,7 @@ class InferenceModule {
     enum class ObservationLayout {
         LegacyHistory,
         ReferenceTracking,
+        GeneralMotionTracking,
     };
 
     void initializeRlState();
@@ -60,13 +66,12 @@ class InferenceModule {
     int updateFlattenedObservation();
     int updateLegacyFlattenedObservation();
     int updateReferenceTrackingFlattenedObservation();
+    int updateGeneralMotionTrackingFlattenedObservation();
     ObservationLayout detectObservationLayout(std::size_t obs_size);
     Vector23d composeTargetJointPositions() const;
     void updateVelocityFilters(const igris_c::msg::dds::LowState &state);
     void processTargetPositions(const igris_c::msg::dds::LowState &state, VectorQd &desired_position) const;
     static bool isParallelJoint(int joint_index);
-    static bool isAnkleObservationJoint(int joint_index);
-    static void zeroAnkleObservationJoints(Vector23d &joint_position);
 
   private:
     std::string module_label_;

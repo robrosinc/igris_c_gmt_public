@@ -47,6 +47,22 @@ constexpr std::array<const char *, kRlReferenceKeybodyCount> kReferenceTrackingG
     "Link_Neck_Pitch",
 };
 
+constexpr std::array<const char *, kGmtResolvedBodyCount> kGeneralMotionTrackingGoalBodyNames = {
+    "base_link",
+    "Left_Hand",
+    "Right_Hand",
+    "Link_Ankle_Roll_Left",
+    "Link_Ankle_Roll_Right",
+    "Link_Elbow_Pitch_Left",
+    "Link_Elbow_Pitch_Right",
+    "Link_Shoulder_Pitch_Left",
+    "Link_Shoulder_Pitch_Right",
+    "Link_Knee_Pitch_Left",
+    "Link_Knee_Pitch_Right",
+    "Link_Hip_Pitch_Left",
+    "Link_Hip_Pitch_Right",
+};
+
 std::vector<std::string> SplitCommaSeparated(const std::string &value) {
     std::vector<std::string> values;
     std::stringstream stream(value);
@@ -146,8 +162,21 @@ class CsvReplayMotionFrameSource : public MotionFrameSource {
             if (values.empty()) {
                 continue;
             }
-            if (values.size() != 52 && values.size() != 103) {
-                throw std::runtime_error("Motion CSV row must have 52 legacy columns or 103 reference-tracking columns: " + line);
+            const std::size_t gmt_csv_values = 2 + static_cast<std::size_t>(kMotionDataGmtValues);
+            const std::size_t gmt_csv_values_with_anchor = 2 + static_cast<std::size_t>(kMotionDataGmtValuesWithAnchor);
+            if (values.size() != 52 && values.size() != 103 && values.size() != gmt_csv_values &&
+                values.size() != gmt_csv_values_with_anchor) {
+                throw std::runtime_error(
+                    "Motion CSV row must have 52 legacy columns, 103 reference-tracking columns, or general-motion-tracking columns: " +
+                    line);
+            }
+            if (config_.layout == "general_motion_tracking_v1" &&
+                values.size() != gmt_csv_values && values.size() != gmt_csv_values_with_anchor) {
+                throw std::runtime_error("Motion CSV row does not match general_motion_tracking_v1 layout: " + line);
+            }
+            if (config_.layout != "general_motion_tracking_v1" &&
+                (values.size() == gmt_csv_values || values.size() == gmt_csv_values_with_anchor)) {
+                throw std::runtime_error("Motion CSV row uses general_motion_tracking_v1 columns but config layout is " + config_.layout);
             }
 
             MotionFrame frame;
@@ -160,6 +189,29 @@ class CsvReplayMotionFrameSource : public MotionFrameSource {
                 frame.joint_position[i] = values[offset + i];
             }
             offset += frame.joint_position.size();
+            if (config_.layout == "general_motion_tracking_v1") {
+                for (std::size_t i = 0; i < frame.gmt_body_position.size(); ++i) {
+                    frame.gmt_body_position[i] = values[offset + i];
+                }
+                offset += frame.gmt_body_position.size();
+                for (std::size_t i = 0; i < frame.root_linear_velocity.size(); ++i) {
+                    frame.root_linear_velocity[i] = values[offset + i];
+                }
+                offset += frame.root_linear_velocity.size();
+                for (std::size_t i = 0; i < frame.root_angular_velocity.size(); ++i) {
+                    frame.root_angular_velocity[i] = values[offset + i];
+                }
+                offset += frame.root_angular_velocity.size();
+                frame.root_position_z = values[offset++];
+                if (values.size() >= gmt_csv_values_with_anchor) {
+                    for (std::size_t i = 0; i < frame.anchor_quaternion_wxyz.size(); ++i) {
+                        frame.anchor_quaternion_wxyz[i] = values[offset + i];
+                    }
+                    frame.anchor_quaternion_valid = true;
+                }
+                frames_.push_back(frame);
+                continue;
+            }
             for (std::size_t i = 0; i < frame.joint_velocity.size(); ++i) {
                 frame.joint_velocity[i] = values[offset + i];
             }
@@ -229,8 +281,9 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
   public:
     explicit OnnxReplayMotionFrameSource(const MotionSourceConfig &config)
         : config_(config), env_(ORT_LOGGING_LEVEL_WARNING, "public_inference_motion_source") {
-        if (config_.layout != "reference_tracking_v1") {
-            throw std::runtime_error("motion_source.type=onnx_replay requires motion_source.layout=reference_tracking_v1");
+        if (config_.layout != "reference_tracking_v1" && config_.layout != "general_motion_tracking_v1") {
+            throw std::runtime_error(
+                "motion_source.type=onnx_replay requires motion_source.layout=reference_tracking_v1 or general_motion_tracking_v1");
         }
         if (config_.onnx_path.empty()) {
             throw std::runtime_error("motion_source.onnx_path must be set when motion_source.type=onnx_replay");
@@ -374,10 +427,18 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
         }
         root_body_index_ = base_it->second;
 
+        std::vector<const char *> goal_body_names;
+        if (config_.layout == "general_motion_tracking_v1") {
+            goal_body_names.assign(kGeneralMotionTrackingGoalBodyNames.begin(), kGeneralMotionTrackingGoalBodyNames.end());
+        } else {
+            goal_body_names.assign(kReferenceTrackingGoalBodyNames.begin(), kReferenceTrackingGoalBodyNames.end());
+        }
+
+        goal_body_indices_.resize(goal_body_names.size());
         for (std::size_t i = 0; i < goal_body_indices_.size(); ++i) {
-            const auto it = body_name_to_index.find(kReferenceTrackingGoalBodyNames[i]);
+            const auto it = body_name_to_index.find(goal_body_names[i]);
             if (it == body_name_to_index.end()) {
-                throw std::runtime_error("Motion ONNX body_names metadata is missing " + std::string(kReferenceTrackingGoalBodyNames[i]));
+                throw std::runtime_error("Motion ONNX body_names metadata is missing " + std::string(goal_body_names[i]));
             }
             goal_body_indices_[i] = it->second;
         }
@@ -458,9 +519,15 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
             if (element_count < source_offset + 3) {
                 throw std::runtime_error("Motion ONNX body_pos_b output is smaller than expected");
             }
-            frame.body_position[target_offset]     = static_cast<double>(data[source_offset]);
-            frame.body_position[target_offset + 1] = static_cast<double>(data[source_offset + 1]);
-            frame.body_position[target_offset + 2] = static_cast<double>(data[source_offset + 2]);
+            if (config_.layout == "general_motion_tracking_v1") {
+                frame.gmt_body_position[target_offset]     = static_cast<double>(data[source_offset]);
+                frame.gmt_body_position[target_offset + 1] = static_cast<double>(data[source_offset + 1]);
+                frame.gmt_body_position[target_offset + 2] = static_cast<double>(data[source_offset + 2]);
+            } else {
+                frame.body_position[target_offset]     = static_cast<double>(data[source_offset]);
+                frame.body_position[target_offset + 1] = static_cast<double>(data[source_offset + 1]);
+                frame.body_position[target_offset + 2] = static_cast<double>(data[source_offset + 2]);
+            }
         }
     }
 
@@ -468,7 +535,7 @@ class OnnxReplayMotionFrameSource : public MotionFrameSource {
     double fps_             = 50.0;
     std::size_t num_frames_ = 0;
     std::size_t root_body_index_ = 0;
-    std::array<std::size_t, kRlReferenceKeybodyCount> goal_body_indices_{};
+    std::vector<std::size_t> goal_body_indices_;
     Clock::time_point start_time_ = Clock::now();
     bool cached_frame_valid_      = false;
     std::size_t cached_frame_index_ = 0;

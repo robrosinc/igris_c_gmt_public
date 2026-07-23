@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <unordered_map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -65,6 +66,63 @@ bool ExtractArrayNumbers(const std::string &payload, const std::string &key, std
     return !values.empty();
 }
 
+bool ExtractStringArray(const std::string &payload, const std::string &key, std::vector<std::string> &values) {
+    values.clear();
+    const std::size_t key_pos = payload.find(key);
+    if (key_pos == std::string::npos) {
+        return false;
+    }
+    const std::size_t array_start = payload.find('[', key_pos);
+    if (array_start == std::string::npos) {
+        return false;
+    }
+
+    int depth = 0;
+    std::size_t array_end = std::string::npos;
+    for (std::size_t i = array_start; i < payload.size(); ++i) {
+        if (payload[i] == '[') {
+            ++depth;
+        } else if (payload[i] == ']') {
+            --depth;
+            if (depth == 0) {
+                array_end = i;
+                break;
+            }
+        }
+    }
+    if (array_end == std::string::npos) {
+        return false;
+    }
+
+    bool in_string = false;
+    char quote = '\0';
+    std::string token;
+    for (std::size_t i = array_start + 1; i < array_end; ++i) {
+        const char value = payload[i];
+        if (!in_string && (value == '\'' || value == '"')) {
+            in_string = true;
+            quote = value;
+            token.clear();
+            continue;
+        }
+        if (in_string && value == quote) {
+            values.push_back(token);
+            in_string = false;
+            quote = '\0';
+            token.clear();
+            continue;
+        }
+        if (in_string && value == '\\' && i + 1 < array_end) {
+            token.push_back(payload[++i]);
+            continue;
+        }
+        if (in_string) {
+            token.push_back(value);
+        }
+    }
+    return !values.empty();
+}
+
 bool ExtractRootHeight(const std::string &payload, double &height) {
     std::vector<double> values;
     if (ExtractArrayNumbers(payload, "root_height", values) && !values.empty()) {
@@ -102,11 +160,75 @@ bool ExtractRootHeight(const std::string &payload, double &height) {
     return true;
 }
 
-std::array<double, kRlNumReferenceBodyPositionObs> MapBodyPosition(const std::vector<double> &values, bool &valid) {
+Eigen::Matrix3d RotationMatrixFromWxyz(const std::array<double, 4> &quat_wxyz) {
+    Eigen::Quaterniond quaternion(quat_wxyz[0], quat_wxyz[1], quat_wxyz[2], quat_wxyz[3]);
+    quaternion.normalize();
+    return quaternion.toRotationMatrix();
+}
+
+std::array<double, 3> RotateWorldVectorToAnchorFrame(const std::array<double, 4> &quat_wxyz, const std::vector<double> &values) {
+    const Eigen::Vector3d world_value(values[0], values[1], values[2]);
+    const Eigen::Vector3d local_value = RotationMatrixFromWxyz(quat_wxyz).transpose() * world_value;
+    return {local_value(0), local_value(1), local_value(2)};
+}
+
+template <std::size_t BodyCount, std::size_t ObsSize>
+bool MapNamedBodyPosition(const std::vector<double> &values, const std::vector<std::string> &source_names,
+                          const std::array<const char *, BodyCount> &target_names, std::array<double, ObsSize> &target) {
+    static_assert(ObsSize == BodyCount * 3);
+    if (source_names.empty() || values.empty() || (values.size() % 3) != 0 || source_names.size() != values.size() / 3) {
+        return false;
+    }
+
+    std::unordered_map<std::string, std::size_t> source_index_by_name;
+    for (std::size_t i = 0; i < source_names.size(); ++i) {
+        source_index_by_name.emplace(source_names[i], i);
+    }
+
+    target.fill(0.0);
+    for (std::size_t i = 0; i < target_names.size(); ++i) {
+        const auto it = source_index_by_name.find(target_names[i]);
+        if (it == source_index_by_name.end()) {
+            if (std::string(target_names[i]) == "base_link") {
+                continue;
+            }
+            return false;
+        }
+        const std::size_t source_offset = it->second * 3;
+        const std::size_t target_offset = i * 3;
+        target[target_offset] = values[source_offset];
+        target[target_offset + 1] = values[source_offset + 1];
+        target[target_offset + 2] = values[source_offset + 2];
+    }
+    return true;
+}
+
+std::array<double, kRlNumReferenceBodyPositionObs> MapReferenceBodyPosition(const std::vector<double> &values,
+                                                                            const std::vector<std::string> &source_names, bool &valid) {
+    static constexpr std::array<const char *, kRlReferenceKeybodyCount> kTargetBodyNames = {
+        "base_link",
+        "Left_Hand",
+        "Right_Hand",
+        "Link_Ankle_Roll_Left",
+        "Link_Ankle_Roll_Right",
+        "Link_Elbow_Pitch_Left",
+        "Link_Elbow_Pitch_Right",
+        "Link_Shoulder_Pitch_Left",
+        "Link_Shoulder_Pitch_Right",
+        "Link_Knee_Pitch_Left",
+        "Link_Knee_Pitch_Right",
+        "Link_Hip_Pitch_Left",
+        "Link_Hip_Pitch_Right",
+        "Link_Neck_Pitch",
+    };
     static constexpr std::array<int, kRlReferenceKeybodyCount> kTopicGoalKeybodyIndices = {0, 23, 31, 9, 15, 19, 27, 16, 24, 7, 13, 4, 10, 33};
 
     valid = false;
     std::array<double, kRlNumReferenceBodyPositionObs> body_position{};
+    if (MapNamedBodyPosition(values, source_names, kTargetBodyNames, body_position)) {
+        valid = true;
+        return body_position;
+    }
     if (values.size() == static_cast<std::size_t>(kRlNumReferenceBodyPositionObs)) {
         std::copy(values.begin(), values.end(), body_position.begin());
         valid = true;
@@ -125,6 +247,64 @@ std::array<double, kRlNumReferenceBodyPositionObs> MapBodyPosition(const std::ve
         }
         if (source_index < 0 || source_index >= source_keybody_count) {
             continue;
+        }
+        const std::size_t source_offset = static_cast<std::size_t>(source_index * 3);
+        const std::size_t target_offset = static_cast<std::size_t>(i * 3);
+        body_position[target_offset]     = values[source_offset];
+        body_position[target_offset + 1] = values[source_offset + 1];
+        body_position[target_offset + 2] = values[source_offset + 2];
+        valid = true;
+    }
+    return body_position;
+}
+
+std::array<double, kGmtNumMotionBodyPositionObs> MapGeneralMotionBodyPosition(const std::vector<double> &values,
+                                                                              const std::vector<std::string> &source_names, bool &valid) {
+    static constexpr std::array<const char *, kGmtResolvedBodyCount> kTargetBodyNames = {
+        "base_link",
+        "Left_Hand",
+        "Right_Hand",
+        "Link_Ankle_Roll_Left",
+        "Link_Ankle_Roll_Right",
+        "Link_Elbow_Pitch_Left",
+        "Link_Elbow_Pitch_Right",
+        "Link_Shoulder_Pitch_Left",
+        "Link_Shoulder_Pitch_Right",
+        "Link_Knee_Pitch_Left",
+        "Link_Knee_Pitch_Right",
+        "Link_Hip_Pitch_Left",
+        "Link_Hip_Pitch_Right",
+    };
+    static constexpr std::array<int, kGmtResolvedBodyCount> kTopicGoalKeybodyIndices = {0, 23, 31, 9, 15, 19, 27, 16, 24, 7, 13, 4, 10};
+
+    valid = false;
+    std::array<double, kGmtNumMotionBodyPositionObs> body_position{};
+    if (MapNamedBodyPosition(values, source_names, kTargetBodyNames, body_position)) {
+        valid = true;
+        return body_position;
+    }
+    if (values.size() == static_cast<std::size_t>(kGmtNumMotionBodyPositionObs)) {
+        std::copy(values.begin(), values.end(), body_position.begin());
+        valid = true;
+        return body_position;
+    }
+    if (values.empty() || (values.size() % 3) != 0) {
+        return body_position;
+    }
+
+    const int source_keybody_count = static_cast<int>(values.size() / 3);
+    const bool source_is_rootless  = source_keybody_count == (kRlReferenceSourceKeybodyCount - 1);
+    for (int i = 0; i < kGmtResolvedBodyCount; ++i) {
+        int source_index = kTopicGoalKeybodyIndices[static_cast<std::size_t>(i)];
+        if (source_is_rootless) {
+            source_index = (source_index == 0) ? -1 : (source_index - 1);
+        }
+        if (source_index < 0) {
+            valid = true;
+            continue;
+        }
+        if (source_index >= source_keybody_count) {
+            return body_position;
         }
         const std::size_t source_offset = static_cast<std::size_t>(source_index * 3);
         const std::size_t target_offset = static_cast<std::size_t>(i * 3);
@@ -163,7 +343,7 @@ std::array<double, kRlNumJointActions> MapJointVector(const std::vector<double> 
     return mapped;
 }
 
-MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t seq, uint64_t stamp_ns) {
+MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t seq, uint64_t stamp_ns, const std::string &layout) {
     MotionFrame frame;
     frame.seq      = seq;
     frame.stamp_ns = stamp_ns;
@@ -171,13 +351,19 @@ MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t
 
     bool has_body = false;
     std::vector<double> body_values;
+    std::vector<std::string> body_names;
+    ExtractStringArray(payload, "link_body_list", body_names);
     has_body = ExtractArrayNumbers(payload, "keybody_pos_local", body_values);
     if (!has_body) {
         has_body = ExtractArrayNumbers(payload, "keybody_pos_world", body_values);
     }
     if (has_body) {
         bool valid = false;
-        frame.body_position = MapBodyPosition(body_values, valid);
+        if (layout == "general_motion_tracking_v1") {
+            frame.gmt_body_position = MapGeneralMotionBodyPosition(body_values, body_names, valid);
+        } else {
+            frame.body_position = MapReferenceBodyPosition(body_values, body_names, valid);
+        }
         has_body = valid;
     }
 
@@ -200,6 +386,8 @@ MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t
         double root_height = 0.0;
         if (ExtractRootHeight(payload, root_height)) {
             frame.root_position_z = root_height;
+        } else if (layout == "general_motion_tracking_v1" && has_body && frame.gmt_body_position.size() >= 3) {
+            frame.root_position_z = frame.gmt_body_position[2];
         } else if (has_body && frame.body_position.size() >= 3) {
             frame.root_position_z = frame.body_position[2];
         }
@@ -212,13 +400,29 @@ MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t
     }
 
     std::vector<double> root_velocity_values;
-    if (ExtractArrayNumbers(payload, "root_vel", root_velocity_values) && root_velocity_values.size() >= 3) {
+    if (ExtractArrayNumbers(payload, "root_vel_b", root_velocity_values) && root_velocity_values.size() >= 3) {
         frame.root_linear_velocity = {root_velocity_values[0], root_velocity_values[1], root_velocity_values[2]};
+    } else if (ExtractArrayNumbers(payload, "root_vel", root_velocity_values) && root_velocity_values.size() >= 3) {
+        frame.root_linear_velocity = frame.anchor_quaternion_valid
+                                         ? RotateWorldVectorToAnchorFrame(frame.anchor_quaternion_wxyz, root_velocity_values)
+                                         : std::array<double, 3>{root_velocity_values[0], root_velocity_values[1], root_velocity_values[2]};
     }
 
     std::vector<double> root_angular_velocity_values;
-    if (ExtractArrayNumbers(payload, "root_angvel", root_angular_velocity_values) && root_angular_velocity_values.size() >= 3) {
+    if (ExtractArrayNumbers(payload, "root_angvel_b", root_angular_velocity_values) && root_angular_velocity_values.size() >= 3) {
         frame.root_angular_velocity = {root_angular_velocity_values[0], root_angular_velocity_values[1], root_angular_velocity_values[2]};
+    } else if (ExtractArrayNumbers(payload, "root_angvel", root_angular_velocity_values) && root_angular_velocity_values.size() >= 3) {
+        frame.root_angular_velocity = frame.anchor_quaternion_valid
+                                          ? RotateWorldVectorToAnchorFrame(frame.anchor_quaternion_wxyz, root_angular_velocity_values)
+                                          : std::array<double, 3>{root_angular_velocity_values[0], root_angular_velocity_values[1],
+                                                                  root_angular_velocity_values[2]};
+    }
+
+    if (layout == "general_motion_tracking_v1") {
+        if (!position_valid || !has_body || !frame.anchor_quaternion_valid) {
+            return {};
+        }
+        return EncodeMotionFrameAsMotionData(frame, layout);
     }
 
     if (!has_body && !(position_valid && velocity_valid)) {
@@ -226,7 +430,7 @@ MotionDataSample DecodeRetargetFramePayload(const std::string &payload, uint64_t
     }
 
     return EncodeMotionFrameStackAsMotionData(std::vector<MotionFrame>(static_cast<std::size_t>(kRlReferenceFrameStackLength), frame),
-                                              "reference_tracking_v1");
+                                              layout);
 }
 
 }  // namespace
@@ -235,12 +439,13 @@ RosMotionReceiver::RosMotionReceiver(std::shared_ptr<MotionDataBuffer> buffer) :
 
 RosMotionReceiver::~RosMotionReceiver() { stop(); }
 
-bool RosMotionReceiver::start(const RosMotionConfig &config) {
+bool RosMotionReceiver::start(const RosMotionConfig &config, const std::string &motion_layout) {
     if (running_.load(std::memory_order_acquire)) {
         return true;
     }
 
     config_ = config;
+    motion_layout_ = motion_layout;
 
     if (!rclcpp::contexts::get_global_default_context()->is_valid()) {
         rclcpp::InitOptions options;
@@ -307,7 +512,7 @@ void RosMotionReceiver::callback(const std_msgs::msg::String &msg) {
 
     const uint64_t seq      = ++seq_;
     const uint64_t stamp_ns = nowSteadyNs();
-    MotionDataSample sample = DecodeRetargetFramePayload(msg.data, seq, stamp_ns);
+    MotionDataSample sample = DecodeRetargetFramePayload(msg.data, seq, stamp_ns, motion_layout_);
     if (!sample.valid) {
         return;
     }

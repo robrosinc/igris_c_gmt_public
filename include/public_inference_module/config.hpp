@@ -36,8 +36,6 @@ struct InferenceConfig {
     MotionSourceConfig motion_source;
     std::string policy_onnx_path;
     bool use_motion_residual_action = false;
-    bool zero_proprioception_ankle_velocity = false;
-    bool zero_reference_motion_ankle_position = false;
     VectorQd kp                     = VectorQd::Zero();
     VectorQd kd                     = VectorQd::Zero();
     std::array<igris_c::msg::dds::KinematicMode, kParallelGroupCount> kinematic_modes{};

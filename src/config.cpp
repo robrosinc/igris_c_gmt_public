@@ -45,7 +45,8 @@ const Vector23d &GetDefaultJointPosLimitLow() {
 
 Vector23d GetResidualActionScale() {
     Vector23d scale;
-    scale << 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2;
+    scale << 0.1, 0.1, 0.2, 0.1, 0.1, 0.2, 0.1, 0.1, 0.2, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+        0.2, 0.2, 0.2, 0.2;
     return scale;
 }
 
@@ -202,10 +203,6 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
     const YAML::Node policy_cfg = cfg["policy"];
     config.policy_onnx_path     = ResolvePath(base_dir, GetOr<std::string>(policy_cfg, "onnx_path", ""));
     config.use_motion_residual_action = GetOr<bool>(policy_cfg, "use_motion_residual_action", config.use_motion_residual_action);
-    config.zero_proprioception_ankle_velocity =
-        GetOr<bool>(policy_cfg, "zero_proprioception_ankle_velocity", config.zero_proprioception_ankle_velocity);
-    config.zero_reference_motion_ankle_position =
-        GetOr<bool>(policy_cfg, "zero_reference_motion_ankle_position", config.zero_reference_motion_ankle_position);
     config.action_scale = config.use_motion_residual_action ? GetResidualActionScale() : Vector23d::Constant(0.25);
     if (policy_cfg && policy_cfg["action_scale"]) {
         CopyFixedSequence(policy_cfg, "action_scale", config.action_scale);

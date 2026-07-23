@@ -18,7 +18,7 @@ class RosMotionReceiver {
     explicit RosMotionReceiver(std::shared_ptr<MotionDataBuffer> buffer);
     ~RosMotionReceiver();
 
-    bool start(const RosMotionConfig &config);
+    bool start(const RosMotionConfig &config, const std::string &motion_layout = "reference_tracking_v1");
     void stop();
     std::shared_ptr<const MotionDataSample> readLatest() const;
     bool useRecordedReference() const;
@@ -31,6 +31,7 @@ class RosMotionReceiver {
   private:
     std::shared_ptr<MotionDataBuffer> buffer_;
     RosMotionConfig config_;
+    std::string motion_layout_ = "reference_tracking_v1";
     std::atomic<uint64_t> seq_{0};
 
     rclcpp::Node::SharedPtr node_;
