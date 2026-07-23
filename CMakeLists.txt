@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(public_inference_module)
+project(igris_c_gmt_public)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,14 +24,12 @@ find_path(
   ONNXRUNTIME_INCLUDE_DIR
   NAMES onnxruntime_c_api.h
   HINTS /usr/local/include /usr/include
-  PATH_SUFFIXES onnxruntime
-)
+  PATH_SUFFIXES onnxruntime)
 
 find_library(
   ONNXRUNTIME_LIBRARY
   NAMES onnxruntime libonnxruntime
-  HINTS /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu
-)
+  HINTS /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu)
 
 if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
   message(
@@ -42,52 +40,48 @@ endif()
 
 add_library(onnxruntime::onnxruntime UNKNOWN IMPORTED)
 set_target_properties(
-  onnxruntime::onnxruntime PROPERTIES
-    IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
-)
+  onnxruntime::onnxruntime
+  PROPERTIES IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+             INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}")
 
 if(TARGET yaml-cpp::yaml-cpp)
-  set(PUBLIC_INFERENCE_YAML_TARGET yaml-cpp::yaml-cpp)
+  set(IGRIS_C_GMT_PUBLIC_YAML_TARGET yaml-cpp::yaml-cpp)
 else()
-  set(PUBLIC_INFERENCE_YAML_TARGET yaml-cpp)
+  set(IGRIS_C_GMT_PUBLIC_YAML_TARGET yaml-cpp)
 endif()
 
 add_library(
-  public_inference_module_core
-  src/config.cpp
-  src/inference_module.cpp
-  src/motion_frame_source.cpp
-  src/ros_motion_receiver.cpp
-  src/robot_io.cpp
-)
+  igris_c_gmt_public_core
+  src/core/config.cpp
+  src/io/robot_io.cpp
+  src/motion/frame_source.cpp
+  src/motion/ros_receiver.cpp
+  src/modules/action_builder.cpp
+  src/modules/motion_handler.cpp
+  src/modules/obs_builder.cpp
+  src/modules/onnx_runner.cpp
+  src/modules/state_handler.cpp)
 
 target_include_directories(
-  public_inference_module_core
+  igris_c_gmt_public_core
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-         $<INSTALL_INTERFACE:include>
-)
+         $<INSTALL_INTERFACE:include>)
 
 target_link_libraries(
-  public_inference_module_core
-  PUBLIC Eigen3::Eigen
-         igris_c_sdk::igris_c_sdk
-         rclcpp::rclcpp
-         ${std_msgs_TARGETS}
-         ${PUBLIC_INFERENCE_YAML_TARGET}
-         onnxruntime::onnxruntime
-)
+  igris_c_gmt_public_core
+  PUBLIC Eigen3::Eigen igris_c_sdk::igris_c_sdk rclcpp::rclcpp
+         ${std_msgs_TARGETS} ${IGRIS_C_GMT_PUBLIC_YAML_TARGET}
+         onnxruntime::onnxruntime)
 
-add_executable(public_inference_module_node src/main.cpp)
-target_link_libraries(public_inference_module_node PRIVATE public_inference_module_core)
+add_executable(igris_c_gmt_public_node src/main.cpp)
+target_link_libraries(igris_c_gmt_public_node PRIVATE igris_c_gmt_public_core)
 
 install(
-  TARGETS public_inference_module_core public_inference_module_node
-  EXPORT public_inference_module-targets
+  TARGETS igris_c_gmt_public_core igris_c_gmt_public_node
+  EXPORT igris_c_gmt_public-targets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
-  RUNTIME DESTINATION lib/${PROJECT_NAME}
-)
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
@@ -96,11 +90,10 @@ install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models)
 install(FILES README.md DESTINATION share/${PROJECT_NAME})
 
 install(
-  EXPORT public_inference_module-targets
-  FILE public_inference_module-targets.cmake
-  NAMESPACE public_inference_module::
-  DESTINATION lib/cmake/${PROJECT_NAME}
-)
+  EXPORT igris_c_gmt_public-targets
+  FILE igris_c_gmt_public-targets.cmake
+  NAMESPACE igris_c_gmt_public::
+  DESTINATION lib/cmake/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -1,0 +1,27 @@
+igris_c_gmt_public_observation:
+  # 23-entry policy joint order:
+  # [LSP, RSP, WY, LSR, RSR, WR, LSY, RSY, WP, LEP, REP,
+  #  LHP, RHP, LHR, RHR, LHY, RHY, LKP, RKP, LAP, RAP, LAR, RAR]
+  # Used by joint_pos_rel: current_policy_joint_position - q_default.
+  q_default: [
+    0.13, 0.13, 0.0, 0.13, -0.13, 0.0, 0.0, 0.0,
+    0.0, -0.3, -0.3, -0.2, -0.2, 0.0, 0.0, 0.0,
+    0.0, 0.3, 0.3, -0.1, -0.1, 0.0, 0.0
+  ]
+
+  groups:
+    # Each group name must match an ONNX input name. Terms are concatenated
+    # in this exact order after applying each term's rolling history.
+    - name: obs
+      terms:
+        - { function: motion_joint_pos, history: 10 }
+        - { function: motion_body_pos, history: 10 }
+        - { function: motion_anchor_lin_vel_b, history: 10 }
+        - { function: motion_anchor_ang_vel_b, history: 10 }
+        - { function: motion_anchor_orientation, history: 10 }
+        - { function: motion_anchor_height, history: 10 }
+        - { function: base_ang_vel, history: 10 }
+        - { function: projected_gravity, history: 10 }
+        - { function: joint_pos_rel, history: 10 }
+        - { function: joint_vel, history: 10 }
+        - { function: last_actions, history: 10 }

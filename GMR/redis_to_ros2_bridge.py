@@ -173,8 +173,7 @@ class RedisToRos2Bridge(Node):
             f"topic_prefix={args.topic_prefix}, poll_hz={args.poll_hz})"
         )
         self.get_logger().info(
-            "Redis keys: "
-            + ", ".join(f"{k}={v}" for k, v in self.redis_keys.items())
+            "Redis keys: " + ", ".join(f"{k}={v}" for k, v in self.redis_keys.items())
         )
         self._seed_default_redis_frame(force=True)
 
@@ -260,7 +259,9 @@ class RedisToRos2Bridge(Node):
             age_ms = int(time.time() * 1000) - t_action_ms
 
         if retarget_frame is None:
-            self.get_logger().info(f"[RETARGET]\n- retarget_frame: None\n- t_action_age_ms: {age_ms}\n")
+            self.get_logger().info(
+                f"[RETARGET]\n- retarget_frame: None\n- t_action_age_ms: {age_ms}\n"
+            )
             self._last_debug_log_time = now
             return
 
@@ -415,7 +416,9 @@ class RedisToRos2Bridge(Node):
                 self.redis_keys["t_action"],
             )
             self.client.command("SET", self.redis_keys["qpos"], json.dumps(self.default_qpos))
-            self.client.command("SET", self.redis_keys["dof_pos"], json.dumps(self.default_qpos[7:]))
+            self.client.command(
+                "SET", self.redis_keys["dof_pos"], json.dumps(self.default_qpos[7:])
+            )
             self.client.command(
                 "SET",
                 self.redis_keys["retarget_frame"],

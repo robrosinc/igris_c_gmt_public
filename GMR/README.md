@@ -2,7 +2,7 @@
 
 TWIST2 코드를 참고해 만든 GMR 프로젝트용 브릿지입니다.
 
-PICO 입력을 받아 GMR에서 리타게팅한 결과를 Redis에 쓰고, Redis 데이터를 ROS2 topic으로 전달합니다. `public_inference_module`은 이 ROS2 topic을 받아 policy observation으로 사용합니다.
+PICO 입력을 받아 GMR에서 리타게팅한 결과를 Redis에 쓰고, Redis 데이터를 ROS2 topic으로 전달합니다. `igris_c_gmt_public`은 이 ROS2 topic을 받아 policy observation으로 사용합니다.
 
 ## 적용 위치
 
@@ -45,7 +45,7 @@ bash scripts/run_ros2_redis_bridge.sh
 /gmr/teleop/retarget_frame
 ```
 
-`public_inference_module`의 기본 설정도 이 topic을 구독합니다.
+`igris_c_gmt_public`의 기본 설정도 이 topic을 구독합니다.
 
 ## 참고
 

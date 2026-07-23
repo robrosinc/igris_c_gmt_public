@@ -1,0 +1,25 @@
+version: "3"
+
+tasks:
+  activate:
+    cmds:
+    - pixi shell --frozen -e dev
+    silent: true
+
+  fmt:
+    cmds:
+    - |
+      find ./include ./src \
+        \( -name "*.hpp" -o -name "*.h" -o -name "*.cpp" \) -print | xargs -r pixi run --frozen clang-format -i
+      pixi run --frozen cmake-format -i ./CMakeLists.txt
+      find ./GMR -name "*.py" -print | xargs -r pixi run --frozen ruff format --no-force-exclude
+      find ./GMR -name "*.py" -print | xargs -r pixi run --frozen ruff check --select I --fix --no-force-exclude
+
+  check:
+    cmds:
+    - |
+      find ./include ./src \
+        \( -name "*.hpp" -o -name "*.h" -o -name "*.cpp" \) -print | xargs -r pixi run --frozen clang-format --dry-run --Werror
+      pixi run --frozen cmake-format --check ./CMakeLists.txt
+      find ./GMR -name "*.py" -print | xargs -r pixi run --frozen ruff format --check --no-force-exclude
+      find ./GMR -name "*.py" -print | xargs -r pixi run --frozen ruff check --select I --no-force-exclude

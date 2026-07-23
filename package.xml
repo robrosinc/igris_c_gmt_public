@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>public_inference_module</name>
+  <name>igris_c_gmt_public</name>
   <version>0.1.0</version>
   <description>Public low-level inference module for IGRIS-C teleoperation.</description>
   <maintainer email="sw@robros.com">Robros</maintainer>

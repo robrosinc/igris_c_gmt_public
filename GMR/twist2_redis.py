@@ -5,7 +5,6 @@ from typing import Any
 
 import numpy as np
 
-
 TWIST2_CANONICAL_SUFFIX = "unitree_g1_with_hands"
 
 

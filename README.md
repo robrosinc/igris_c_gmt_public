@@ -1,13 +1,13 @@
-# public_inference_module
+# igris_c_gmt_public
 
 External low-level inference package for IGRIS-C teleoperation.
 
 ## Scope
 
 - Reads robot state through `igris_c_sdk` over CycloneDDS.
-- Runs a policy ONNX model in a control loop shaped after `TrackingModuleV1`.
-- Publishes `igris_c_sdk::LowCmd` only.
-- Loads `kp`, `kd`, and `kinematic_modes` from this package's YAML config.
+- Runs a policy ONNX model in a control loop.
+- Publishes `igris_c_sdk::LowCmd`.
+- Loads observation layout from `config/obs.yaml` and action settings from `config/action.yaml`.
 - Includes an example teleoperation ONNX model under `models/wbc_teleop/0721/policy.onnx`.
 - Does not switch robot modes automatically.
 - Does not depend on internal `igris_c` controller types.
@@ -19,60 +19,100 @@ The package accepts motion input through one of these source types:
 - `ros2`: subscribes to a ROS 2 topic from the PICO-side module.
 - `onnx_replay`: replays a recorded motion ONNX file with `time_step` input and motion tensor outputs.
 - `csv_replay`: replays retargeted motion frames from a CSV file.
-- `null`: no upstream motion data. The node publishes a hold command from the latest `LowState`.
+- `null`: no upstream motion data. The worker does not run policy inference until a valid motion source is configured.
 
 `ros2` is the intended public teleoperation path. `onnx_replay` and `csv_replay` are useful for recorded-motion bring-up.
 
-## Motion Data Buffer
+## Modular Pipeline
 
-The ROS 2 callback does not write directly into mutable inference state. It writes an immutable `MotionDataSample` snapshot into an atomic latest-sample buffer owned by `InferenceModule`.
+The node is split into small modules:
 
-Each sample carries:
+- `StateHandler`: reads `LowState`, applies the configured filters, builds joint/base observations, and stores the latest processed state.
+- `MotionHandler`: owns ROS motion input, recorded-motion replay, freshness checks, mode transitions, and the motion-step clock.
+- `ObservationBuilder`: reads `config/obs.yaml`, calls observation functions from `include/utils/obs_functions.h`, and builds ONNX input groups.
+- `OnnxRunner`: executes the policy ONNX model from `policy.onnx_path`.
+- `ActionBuilder`: reads `config/action.yaml`, converts raw network actions into desired joint positions, applies joint limits, and builds `LowCmd`.
+
+`main.cpp` wires those modules into two loops:
+
+1. The main loop runs at `loop.control_hz`.
+2. It reads the newest DDS `LowState` from `RobotIo`.
+3. When the state sequence changes, it updates `StateHandler`.
+4. The worker thread wakes at `loop.policy_hz`.
+5. The worker reads the latest processed state.
+6. `MotionHandler` supplies either the latest live ROS motion frame or the replay frame at the current motion step.
+7. `ObservationBuilder` builds the ONNX input groups from the configured observation terms.
+8. `OnnxRunner` runs the policy and returns the raw 23-element action vector.
+9. `ActionBuilder` converts the raw action into desired joint positions and `LowCmd` fields.
+10. The worker writes the command into the action buffer.
+11. The main loop publishes the command once when the action buffer sequence changes.
+12. `MotionHandler::advance()` increments the motion replay clock only after a command is successfully built.
+
+If robot state is not changing, motion is missing/stale, observation building fails, ONNX inference fails, or action building fails, no new command is published. This is intentional: the package waits instead of silently publishing commands from incomplete data.
+
+ROS 2 motion callbacks write immutable `MotionFrame` snapshots into an atomic latest-frame buffer. Each frame stores:
 
 - `seq`
-- `stamp_ns`
-- `values[]`
+- `joint_position[23]`
+- `joint_velocity[23]`
+- `body_names[]`
+- `body_position[]` as xyz-packed local retarget body positions from `keybody_pos_local`
+- `body_orientation[]` as wxyz-packed local retarget body orientations from `keybody_rot_local`, when present
+- `body_linear_velocity[]` and `body_angular_velocity[]` as xyz-packed local/body-frame body velocities, when present
+- `anchor_position[3]`
+- `anchor_linear_velocity[3]` and `anchor_angular_velocity[3]` in the world frame
+- `anchor_linear_velocity_b[3]` and `anchor_angular_velocity_b[3]` in the anchor/body frame
+- `anchor_quaternion_wxyz[4]`
 
-The control loop atomically loads one snapshot per cycle. That avoids reading the motion data while a ROS callback is writing it.
+The worker atomically loads one snapshot per cycle. That avoids reading motion data while a ROS callback is writing it.
+
+## Where To Customize
+
+Most policy-specific changes should not require editing `main.cpp`.
+
+- Robot/network settings: edit `config/params.yaml`, section `robot`, or pass `--domain-id`, `--namespace`, or `--cyclonedds-xml`.
+- Loop rates and filters: edit `config/params.yaml`, sections `loop` and `filters`.
+- Motion source: edit `config/params.yaml`, section `motion_source`.
+- ROS motion topic/QoS: edit `config/ros.yaml`.
+- Policy ONNX path: edit `config/params.yaml`, section `policy`.
+- Observation order/history/input groups: edit `config/obs.yaml`.
+- New observation terms: add a function and registry entry in `include/utils/obs_functions.h`, then reference its name from `config/obs.yaml`.
+- Body-position subset for motion body observations: edit `kMotionBodyNames` near the top of `include/utils/obs_functions.h`.
+- Action scaling, residual mode, limits, gains, and kinematic modes: edit `config/action.yaml`.
+- New action semantics: edit `src/modules/action_builder.cpp`.
+- New motion source type: implement it in `src/motion/frame_source.cpp` and add it to `CreateMotionFrameSource`.
+
+The 23-entry policy/action joint order used by `obs.yaml` and most `action.yaml` arrays is:
+
+```text
+[LSP, RSP, WY, LSR, RSR, WR, LSY, RSY, WP, LEP, REP,
+ LHP, RHP, LHR, RHR, LHY, RHY, LKP, RKP, LAP, RAP, LAR, RAR]
+```
+
+Full motor vectors such as 31-entry `kp` and `kd` use the SDK motor order documented in `config/action.yaml`.
 
 ## Observation Construction
 
-Observation construction is separated from ROS transport.
+Observation construction is configured in `config/obs.yaml`.
 
-- ROS transport stores raw numeric payloads in `MotionDataSample.values`.
-- The inference module reads one coherent snapshot from the motion buffer.
-- The observation constructor decodes that snapshot according to `motion_source.layout`.
+- ROS/replay motion sources store data in the same canonical `MotionFrame` shape.
+- Observation term order, group name, and per-term history length come from `obs.yaml`.
+- `q_default` for `joint_pos_rel` comes from `obs.yaml`.
+- Custom observation functions can be added to `include/utils/obs_functions.h` and referenced by function name in `obs.yaml`.
 
-Supported layouts:
+The ROS retarget payload format is the GMR payload. The receiver requires `dof_pos`, `dof_vel`, `keybody_pos_local`, `link_body_list`, `root_pos`, `root_rot`, `root_vel`, and `root_angvel`. Missing fields make the motion frame invalid. The receiver stores `root_vel` and `root_angvel` as world-frame anchor velocities, then also stores converted anchor/body-frame copies in the `_b` fields.
 
-- `general_motion_tracking_v1`
-- `reference_tracking_v1`
-- `q23_dq23_quatwxyz4`
+Observation functions decide how to use the frame:
 
-`general_motion_tracking_v1` is the default DAgger-PPO student-policy path and decodes:
+- `motion_body_pos` selects the bodies named in `kMotionBodyNames` at the top of `include/utils/obs_functions.h`.
+- `motion_body_orientation` selects the matching local body quaternions when the upstream frame contains them.
+- `motion_body_lin_vel` and `motion_body_ang_vel` select matching local/body-frame body velocities when the upstream frame contains them.
+- `motion_anchor_lin_vel` and `motion_anchor_ang_vel` return world-frame anchor velocities.
+- `motion_anchor_lin_vel_b` and `motion_anchor_ang_vel_b` return anchor/body-frame anchor velocities.
+- `motion_anchor_orientation` and `motion_root_state` derive 6D orientation terms from `anchor_quaternion_wxyz` and the live robot state.
+- `motion_anchor_height` extracts z from `anchor_position`.
 
-- `joint_position[23]`
-- `motion_body_pos_b[39]`
-- `motion_anchor_linear_velocity_b[3]`
-- `motion_anchor_angular_velocity_b[3]`
-- `motion_anchor_height[1]`
-- `anchor_quaternion_wxyz[4]` from the sample metadata or optional payload suffix
-
-`reference_tracking_v1` is the WBC policy path and decodes:
-
-- `joint_position[23]`
-- `joint_velocity[23]`
-- `root_position_z[1]`
-- `root_state[6]`
-- `body_position[42]`
-- `root_linear_velocity[3]`
-- `root_angular_velocity[3]`
-
-`q23_dq23_quatwxyz4` remains available for older 1210-observation policies and decodes:
-
-- `joint_position[23]`
-- `joint_velocity[23]`
-- `anchor_quaternion_wxyz[4]`
+Body selection is strict after ROS payload normalization. The ROS receiver inserts `base_link` with zero local position and identity local orientation if GMR omits it. If any other requested body is missing, duplicated, or malformed, observation construction fails.
 
 The general motion tracking observation contains 10-step history of:
 
@@ -83,16 +123,7 @@ The general motion tracking observation contains 10-step history of:
 - reference anchor height
 - robot base angular velocity, projected gravity, relative joint position, joint velocity, and last actions
 
-The WBC reference-tracking observation contains:
-
-- history of robot joint position, joint velocity, projected gravity, and base angular velocity
-- last policy actions
-- reference joint position and velocity
-- reference root state
-- reference body positions
-- reference root linear and angular velocity
-
-If the customer later needs a different payload layout or a richer observation, they only need to change the decode path inside the inference module. The ROS 2 subscriber and atomic buffer can remain unchanged.
+If a policy needs a different observation order or history length, edit `config/obs.yaml`. If it needs a new term, add the function in `include/utils/obs_functions.h` and reference it in `obs.yaml`.
 
 ## ROS 2 Topic Type
 
@@ -100,19 +131,20 @@ The ROS 2 receiver subscribes to:
 
 - `std_msgs/msg/String`
 
-The payload is parsed for the same GMR keys used by the internal WBC teleop path: `dof_pos`, `dof_vel`, `keybody_pos_local` or
-`keybody_pos_world`, `link_body_list`, `root_pos` or `root_height`, `root_rot`, `root_vel_b` or `root_vel`, and `root_angvel_b` or
-`root_angvel`.
+The payload is parsed for these GMR keys: `dof_pos`, `dof_vel`, `keybody_pos_local`, `link_body_list`, `root_pos`, `root_rot`,
+`root_vel`, `root_angvel`, and optionally `keybody_rot_local`. Body velocity arrays are optional and may be named
+`keybody_lin_vel_local` / `keybody_ang_vel_local` or `body_lin_vel_b` / `body_ang_vel_b`.
 
 ## CSV Format
 
-Each non-comment row in `csv_replay` for `reference_tracking_v1` must contain exactly:
+CSV replay accepts the current general-motion-tracking row format:
 
 ```text
-seq,stamp_ns,q0,...,q22,dq0,...,dq22,root_z,root_state0,...,root_state5,body_pos0,...,body_pos41,root_lin_vel0,...,root_lin_vel2,root_ang_vel0,...,root_ang_vel2
+seq,unused_stamp_ns,q0,...,q22,body_pos0,...,body_pos38,anchor_lin_vel0,...,anchor_lin_vel2,anchor_ang_vel0,...,anchor_ang_vel2,anchor_height,anchor_quat_w,anchor_quat_x,anchor_quat_y,anchor_quat_z
 ```
 
-The sample file in `data/csv/sample_motion_frames.csv` shows the layout.
+The second CSV column is accepted for compatibility with older exports but is not stored in `MotionFrame`.
+CSV body positions are interpreted in the exact `kMotionBodyNames` order. CSV replay treats the legacy anchor velocity columns as anchor/body-frame values, derives world-frame anchor velocities from the anchor quaternion, and also accepts rows with optional `body_orientation0,...` values after `body_pos38` and full `anchor_pos0,anchor_pos1,anchor_pos2` in place of the single `anchor_height` column.
 
 ## ONNX Motion Replay
 
@@ -142,38 +174,28 @@ Build from the ROS workspace:
 ```bash
 cd /home/robros/workspace
 source /home/robros/workspace/install/setup.bash
-colcon build --packages-select public_inference_module
+colcon build --packages-select igris_c_gmt_public
 ```
 
 Run recorded ONNX motion replay:
 
 ```bash
 source /home/robros/workspace/install/setup.bash
-ros2 run public_inference_module public_inference_module_node \
-  --config /home/robros/workspace/src/public_inference_module/config/params.yaml \
+ros2 run igris_c_gmt_public igris_c_gmt_public_node \
+  --config "$(ros2 pkg prefix igris_c_gmt_public)/share/igris_c_gmt_public/config/params.yaml" \
   --namespace igris_c_<your namespace>
 ```
-
-## Plot Logs
-
-On clean shutdown, the node writes SVG plots to:
-
-```text
-/home/robros/workspace/src/public_inference_module/log/plot
-```
-
-The output contains `action/` plots for each final desired joint position sent in the 23-dimensional action joint order and `state/` plots for `joint_pos_rel`, `joint_vel`, `base_ang_vel`, `projected_gravity`, `motion_joint_pos`, and `motion_anchor_height`.
 
 Overall execution order:
 
 1. Run the IGRIS-C bridge/controller process so it publishes `rt/lowstate` and forwards DDS `rt/lowcmd` into the controller command buffer.
-2. Run `public_inference_module`.
+2. Run `igris_c_gmt_public`.
 3. Switch the robot to LOW_LEVEL mode when ready.
 
-For live ROS 2 teleoperation, set `motion_source.type: "ros2"`, run the GMR teleop process, then run the Redis bridge before `public_inference_module`.
+For live ROS 2 teleoperation, set `motion_source.type: "ros2"`, run the GMR teleop process, then run the Redis bridge before `igris_c_gmt_public`.
 
 ## Notes
 
 - The robot must be switched to LOW_LEVEL mode before the published `LowCmd` is applied.
-- If the motion sample is missing or stale, the node falls back to a hold command from the latest `LowState`.
+- If the motion sample is missing or stale, the worker skips policy inference and does not publish a new action.
 - The package is intentionally conservative on safety: no hidden mode changes and no dependency on core-only command paths.

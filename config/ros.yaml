@@ -1,8 +1,13 @@
-public_inference_module_ros:
+igris_c_gmt_public_ros:
   ros:
+    # ROS 2 domain used only by the motion receiver context.
     domain_id: 0
-    node_name: "public_inference_module_motion_subscriber"
+    node_name: "igris_c_gmt_public_motion_subscriber"
+    # std_msgs/msg/String topic published by GMR redis_to_ros2_bridge.py.
     topic_name: "/gmr/teleop/retarget_frame"
+    # std_msgs/msg/Bool topic. True switches MotionHandler to recorded ONNX replay
+    # when motion_source.onnx_path is configured in params.yaml.
     recorded_reference_topic_name: "/gmr/teleop/use_recorded_reference"
     qos_depth: 1
+    # true uses SensorDataQoS best-effort reliability; false uses reliable.
     best_effort: true

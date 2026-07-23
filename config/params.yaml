@@ -1,62 +1,51 @@
-public_inference_module:
+igris_c_gmt_public:
   robot:
+    # CycloneDDS domain and namespace for IGRIS-C LowState/LowCmd.
+    # CLI --domain-id and --namespace override these values.
     domain_id: 0
     namespace: ""
     cyclonedds_xml_path: ""
 
   loop:
+    # control_hz: main DDS state/publish loop.
+    # policy_hz: worker thread observation/inference/action rate.
+    # control_hz must be divisible by policy_hz.
     control_hz: 300
     policy_hz: 50
 
+  observation:
+    # Relative to this params.yaml unless absolute.
+    config_path: "obs.yaml"
+
+  action:
+    # Relative to this params.yaml unless absolute.
+    config_path: "action.yaml"
+
   motion_source:
-    # type: "ros2" for live tele op, "onnx_replay" for recorded reference-motion tracking.
+    # type:
+    #   ros2: live GMR retarget frame over ROS 2
+    #   onnx_replay: recorded motion ONNX replay
+    #   csv_replay: CSV replay
+    #   null: no motion source; policy worker waits
     type: "onnx_replay"
+    # Used when type == csv_replay.
     csv_path: ""
+    # Used when type == onnx_replay. Also used as recorded fallback source in ros2 mode.
     onnx_path: "../data/onnx/motion.onnx"
+    # Used when type == ros2.
     ros_config_path: "ros.yaml"
-    layout: "general_motion_tracking_v1"
+    # Used by CSV replay and as fallback if motion ONNX metadata has no motion_fps.
     fps: 50.0
+    # Live ROS motion frames older than this are treated as stale.
+    frame_timeout_ms: 100
+    # For replay sources: true wraps to the first frame; false holds the last frame.
     loop: false
 
   policy:
+    # Policy ONNX file. Input names must match obs.yaml group names.
     onnx_path: "../models/wbc_teleop/0721/policy.onnx"
-    use_motion_residual_action: true
-    q_default: [
-      0.13, 0.13, 0.0, 0.13, -0.13, 0.0, 0.0, 0.0,
-      0.0, -0.3, -0.3, -0.2, -0.2, 0.0, 0.0, 0.0,
-      0.0, 0.3, 0.3, -0.1, -0.1, 0.0, 0.0
-    ]
-    action_scale: [
-      0.1, 0.1, 0.2, 0.1, 0.1, 0.2, 0.1, 0.1,
-      0.2, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2,
-      0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2
-    ]
 
   filters:
+    # Low-pass filter cutoffs for DDS state-derived observations. Set <= 0 to disable.
     q_dot_lpf_cutoff_hz: 16.0
     imu_ang_vel_lpf_cutoff_hz: 50.0
-
-  safety:
-    motion_frame_timeout_ms: 100
-    non_parallel_safety_coef: 0.8
-
-  command:
-    kinematic_modes: [PJS, PJS, PJS, PJS, PJS]
-
-    kp: [
-      121.51457, 660.634418, 230.579719,
-      177.652880, 183.204531, 121.51457, 177.652880, 140.060352, 116.451549,
-      177.652880, 183.204531, 121.51457, 177.652880, 140.060352, 116.451549,
-      121.51457, 121.51457, 121.51457, 121.51457, 15.0, 15.0, 15.0,
-      121.51457, 121.51457, 121.51457, 121.51457, 15.0, 15.0, 15.0,
-      5.0, 10.0
-    ]
-
-    kd: [
-      6.077864, 34.67, 12.1,
-      15.079645, 12.697244, 6.077864, 15.079645, 18.203414, 15.132817,
-      15.079645, 12.697244, 6.077864, 15.079645, 18.203414, 15.132817,
-      6.077864, 6.077864, 6.077864, 6.077864, 0.1, 0.1, 0.1,
-      6.077864, 6.077864, 6.077864, 6.077864, 0.1, 0.1, 0.1,
-      0.1, 0.1
-    ]
