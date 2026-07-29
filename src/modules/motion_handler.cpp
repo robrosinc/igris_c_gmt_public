@@ -5,10 +5,33 @@
 #include "motion/ros_receiver.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
 namespace igris_c_gmt_public {
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+template <std::size_t N>
+void LowPassInPlace(std::array<double, N> &value,
+                    std::array<double, N> &state, double sample_hz,
+                    double cutoff_hz) {
+  if (cutoff_hz <= 0.0 || sample_hz <= 0.0) {
+    state = value;
+    return;
+  }
+  const double dt = 1.0 / sample_hz;
+  const double rc = 1.0 / (2.0 * kPi * cutoff_hz);
+  const double alpha = dt / (rc + dt);
+  for (std::size_t i = 0; i < N; ++i) {
+    state[i] += alpha * (value[i] - state[i]);
+    value[i] = state[i];
+  }
+}
+
+} // namespace
 
 MotionHandler::MotionHandler() = default;
 
@@ -62,6 +85,7 @@ void MotionHandler::reset() {
   live_motion_seen_ = false;
   last_live_motion_seq_ = 0;
   last_live_motion_wall_time_ = std::chrono::steady_clock::now();
+  resetReferenceVelocityFilters();
 
   if (replay_source_) {
     replay_source_->reset();
@@ -147,6 +171,7 @@ bool MotionHandler::read(MotionHandlerOutput &output,
   }
 
   mode_changed |= transitionTo(motion_mode);
+  updateReferenceVelocityFilters(output.frames);
   output.available = true;
   output.mode_changed = mode_changed;
   output.step = motion_step_;
@@ -161,7 +186,45 @@ bool MotionHandler::transitionTo(const std::string &mode) {
     return false;
   }
   active_mode_ = mode;
+  resetReferenceVelocityFilters();
   return true;
+}
+
+void MotionHandler::resetReferenceVelocityFilters() {
+  reference_velocity_lpf_initialized_ = false;
+  reference_joint_velocity_lpf_.fill(0.0);
+  reference_anchor_linear_velocity_lpf_.fill(0.0);
+  reference_anchor_angular_velocity_lpf_.fill(0.0);
+}
+
+void MotionHandler::updateReferenceVelocityFilters(
+    std::vector<MotionFrame> &frames) {
+  if (frames.empty()) {
+    return;
+  }
+
+  if (!reference_velocity_lpf_initialized_) {
+    reference_joint_velocity_lpf_ = frames.front().joint_velocity;
+    reference_anchor_linear_velocity_lpf_ =
+        frames.front().anchor_linear_velocity_b;
+    reference_anchor_angular_velocity_lpf_ =
+        frames.front().anchor_angular_velocity_b;
+    reference_velocity_lpf_initialized_ = true;
+  }
+
+  for (MotionFrame &frame : frames) {
+    LowPassInPlace(frame.joint_velocity, reference_joint_velocity_lpf_,
+                   static_cast<double>(config_.policy_hz),
+                   config_.reference_joint_velocity_lpf_cutoff_hz);
+    LowPassInPlace(frame.anchor_linear_velocity_b,
+                   reference_anchor_linear_velocity_lpf_,
+                   static_cast<double>(config_.policy_hz),
+                   config_.reference_anchor_linear_velocity_lpf_cutoff_hz);
+    LowPassInPlace(frame.anchor_angular_velocity_b,
+                   reference_anchor_angular_velocity_lpf_,
+                   static_cast<double>(config_.policy_hz),
+                   config_.reference_anchor_angular_velocity_lpf_cutoff_hz);
+  }
 }
 
 } // namespace igris_c_gmt_public

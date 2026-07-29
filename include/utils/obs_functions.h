@@ -16,7 +16,6 @@ namespace igris_c_gmt_public::obs_functions {
 
 using ObsFunction = std::function<Eigen::VectorXd(const ObservationInput &)>;
 
-inline constexpr std::size_t kMotionRootStateObsSize = 6;
 inline constexpr std::size_t kGeneralMotionAnchorOrientationObsSize = 6;
 
 // Edit this list when the policy should observe a different body-position
@@ -35,6 +34,7 @@ inline constexpr std::array kMotionBodyNames = {
     "Link_Knee_Pitch_Right",
     "Link_Hip_Pitch_Left",
     "Link_Hip_Pitch_Right",
+    "Link_Neck_Pitch",
 };
 inline constexpr std::size_t kMotionBodyCount = kMotionBodyNames.size();
 inline constexpr std::size_t kMotionBodyPositionObsSize = kMotionBodyCount * 3;
@@ -337,6 +337,9 @@ inline Eigen::VectorXd MotionAnchorHeight(const ObservationInput &input) {
 // Reference root state with yaw removed from robot and reference anchors.
 inline Eigen::VectorXd MotionRootState(const ObservationInput &input) {
   const MotionFrame &frame = LatestMotionFrame(input);
+  if (frame.root_state_valid) {
+    return ToVectorXd(frame.root_state);
+  }
   if (!frame.anchor_quaternion_valid) {
     throw std::runtime_error(
         "motion_root_state requires anchor_quaternion_wxyz");

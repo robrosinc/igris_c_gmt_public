@@ -42,6 +42,7 @@ enum JointIndex {
 
 inline constexpr int kRlNumJointActions = 23;
 inline constexpr int kMotionFrameStackLength = 1;
+inline constexpr int kMotionRootStateObsSize = 6;
 
 using VectorQd = Eigen::Matrix<double, kModelDof, 1>;
 using Vector23d = Eigen::Matrix<double, kRlNumJointActions, 1>;
@@ -79,6 +80,12 @@ struct MotionFrame {
   std::vector<double> body_angular_velocity;
   // Anchor/root position in the world frame.
   std::array<double, 3> anchor_position{};
+  // Reference root state represented by the first two rotation matrix columns.
+  // When not supplied by the motion source, observation code derives it from
+  // anchor_quaternion_wxyz and the live robot state.
+  std::array<double, kMotionRootStateObsSize> root_state{
+      1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+  bool root_state_valid = false;
   // Anchor/root linear and angular velocities in the world frame.
   std::array<double, 3> anchor_linear_velocity{};
   std::array<double, 3> anchor_angular_velocity{};

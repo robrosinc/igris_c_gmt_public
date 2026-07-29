@@ -1,7 +1,7 @@
 igris_c_gmt_public_action:
   # If true: desired_policy_q = motion_joint_pos + network_action * action_scale.
   # If false: desired_policy_q = q_default + network_action * action_scale.
-  use_motion_residual_action: true
+  use_motion_residual_action: false
 
   # Shrinks soft limiting for non-parallel joints only. Parallel ankle/waist
   # joints are handled by the controller-side coupling constraints.
@@ -21,9 +21,9 @@ igris_c_gmt_public_action:
   # [LSP, RSP, WY, LSR, RSR, WR, LSY, RSY, WP, LEP, REP,
   #  LHP, RHP, LHR, RHR, LHY, RHY, LKP, RKP, LAP, RAP, LAR, RAR]
   action_scale: [
-    0.1, 0.1, 0.2, 0.1, 0.1, 0.2, 0.1, 0.1,
-    0.2, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2,
-    0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2
+    0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+    0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+    0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25
   ]
 
   # 23-entry policy/action joint order:
@@ -51,34 +51,34 @@ igris_c_gmt_public_action:
   # Five parallel actuator groups. The current action builder supports PJS only.
   kinematic_modes: [PJS, PJS, PJS, PJS, PJS]
 
-  # 31-entry full joint order:
-  # [WY, WR, WP, LHP, LHR, LHY, LKP, LAP, LAR,
-  #  RHP, RHR, RHY, RKP, RAP, RAR,
-  #  LSP, LSR, LSY, LEP, left_wrist_0, left_wrist_1, left_wrist_2,
-  #  RSP, RSR, RSY, REP, right_wrist_0, right_wrist_1, right_wrist_2,
-  #  neck_yaw, neck_pitch]
-  # 23-entry policy order is also accepted; the loader maps it into this full joint vector.
+  # 23-entry policy/action joint order:
+  # [LSP, RSP, WY, LSR, RSR, WR, LSY, RSY, WP, LEP, REP,
+  #  LHP, RHP, LHR, RHR, LHY, RHY, LKP, RKP, LAP, RAP, LAR, RAR]
   kp: [
-    121.51457, 660.634418, 230.579719,
-    177.652880, 183.204531, 121.51457, 177.652880, 140.060352, 116.451549,
-    177.652880, 183.204531, 121.51457, 177.652880, 140.060352, 116.451549,
-    121.51457, 121.51457, 121.51457, 121.51457, 15.0, 15.0, 15.0,
-    121.51457, 121.51457, 121.51457, 121.51457, 15.0, 15.0, 15.0,
-    5.0, 10.0
+    60.757285, 60.757285, 60.757285,
+    60.757285, 60.757285, 660.634418,
+    60.757285, 60.757285, 230.579719,
+    60.757285, 60.757285,
+    118.435253, 118.435253,
+    122.136354, 122.136354,
+    60.757285, 60.757285,
+    118.435253, 118.435253,
+    93.373568, 93.373568,
+    77.634366, 77.634366
   ]
 
-  # 31-entry full joint order:
-  # [WY, WR, WP, LHP, LHR, LHY, LKP, LAP, LAR,
-  #  RHP, RHR, RHY, RKP, RAP, RAR,
-  #  LSP, LSR, LSY, LEP, left_wrist_0, left_wrist_1, left_wrist_2,
-  #  RSP, RSR, RSY, REP, right_wrist_0, right_wrist_1, right_wrist_2,
-  #  neck_yaw, neck_pitch]
-  # 23-entry policy order is also accepted; the loader maps it into this full joint vector.
+  # 23-entry policy/action joint order:
+  # [LSP, RSP, WY, LSR, RSR, WR, LSY, RSY, WP, LEP, REP,
+  #  LHP, RHP, LHR, RHR, LHY, RHY, LKP, RKP, LAP, RAP, LAR, RAR]
   kd: [
-    6.077864, 34.67, 12.1,
-    15.079645, 12.697244, 6.077864, 15.079645, 18.203414, 15.132817,
-    15.079645, 12.697244, 6.077864, 15.079645, 18.203414, 15.132817,
-    6.077864, 6.077864, 6.077864, 6.077864, 0.1, 0.1, 0.1,
-    6.077864, 6.077864, 6.077864, 6.077864, 0.1, 0.1, 0.1,
-    0.1, 0.1
+    4.297699, 4.297699, 4.297699,
+    4.297699, 4.297699, 36.256342,
+    4.297699, 4.297699, 12.653342,
+    4.297699, 4.297699,
+    15.079645, 15.079645,
+    10.367256, 10.367256,
+    4.297699, 4.297699,
+    15.079645, 15.079645,
+    14.863025, 14.863025,
+    12.355893, 12.355893
   ]

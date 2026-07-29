@@ -98,6 +98,16 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
   config.imu_ang_vel_lpf_cutoff_hz =
       GetOr<double>(filter_cfg, "imu_ang_vel_lpf_cutoff_hz",
                     config.imu_ang_vel_lpf_cutoff_hz);
+  config.reference_joint_velocity_lpf_cutoff_hz =
+      GetOr<double>(filter_cfg, "reference_joint_velocity_lpf_cutoff_hz",
+                    config.reference_joint_velocity_lpf_cutoff_hz);
+  config.reference_anchor_linear_velocity_lpf_cutoff_hz =
+      GetOr<double>(filter_cfg, "reference_anchor_linear_velocity_lpf_cutoff_hz",
+                    config.reference_anchor_linear_velocity_lpf_cutoff_hz);
+  config.reference_anchor_angular_velocity_lpf_cutoff_hz =
+      GetOr<double>(filter_cfg,
+                    "reference_anchor_angular_velocity_lpf_cutoff_hz",
+                    config.reference_anchor_angular_velocity_lpf_cutoff_hz);
 
   return config;
 }

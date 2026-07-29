@@ -3,6 +3,7 @@
 #include "core/config.hpp"
 #include "core/types.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -39,6 +40,8 @@ public:
 
 private:
   bool transitionTo(const std::string &mode);
+  void resetReferenceVelocityFilters();
+  void updateReferenceVelocityFilters(std::vector<MotionFrame> &frames);
 
 private:
   InferenceConfig config_;
@@ -54,6 +57,11 @@ private:
   uint64_t last_live_motion_seq_ = 0;
   std::chrono::steady_clock::time_point last_live_motion_wall_time_ =
       std::chrono::steady_clock::now();
+
+  bool reference_velocity_lpf_initialized_ = false;
+  std::array<double, kRlNumJointActions> reference_joint_velocity_lpf_{};
+  std::array<double, 3> reference_anchor_linear_velocity_lpf_{};
+  std::array<double, 3> reference_anchor_angular_velocity_lpf_{};
 };
 
 } // namespace igris_c_gmt_public

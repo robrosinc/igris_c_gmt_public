@@ -14,14 +14,15 @@ igris_c_gmt_public_observation:
     # in this exact order after applying each term's rolling history.
     - name: obs
       terms:
-        - { function: motion_joint_pos, history: 10 }
-        - { function: motion_body_pos, history: 10 }
-        - { function: motion_anchor_lin_vel_b, history: 10 }
-        - { function: motion_anchor_ang_vel_b, history: 10 }
-        - { function: motion_anchor_orientation, history: 10 }
-        - { function: motion_anchor_height, history: 10 }
-        - { function: base_ang_vel, history: 10 }
-        - { function: projected_gravity, history: 10 }
-        - { function: joint_pos_rel, history: 10 }
-        - { function: joint_vel, history: 10 }
-        - { function: last_actions, history: 10 }
+        - { function: joint_pos_rel, history: 20 }
+        - { function: joint_vel, history: 20 }
+        - { function: projected_gravity, history: 20 }
+        - { function: base_ang_vel, history: 20 }
+        - { function: last_actions, history: 20 }
+        - { function: motion_joint_pos, history: 1 }
+        - { function: motion_joint_vel, history: 1 }
+        - { function: motion_anchor_height, history: 1 }
+        - { function: motion_root_state, history: 1 }
+        - { function: motion_body_pos, history: 1 }
+        - { function: motion_anchor_lin_vel_b, history: 1 }
+        - { function: motion_anchor_ang_vel_b, history: 1 }

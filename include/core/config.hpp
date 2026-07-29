@@ -37,6 +37,9 @@ struct InferenceConfig {
   std::string policy_onnx_path;
   double q_dot_lpf_cutoff_hz = 16.0;
   double imu_ang_vel_lpf_cutoff_hz = 50.0;
+  double reference_joint_velocity_lpf_cutoff_hz = 0.0;
+  double reference_anchor_linear_velocity_lpf_cutoff_hz = 0.0;
+  double reference_anchor_angular_velocity_lpf_cutoff_hz = 0.0;
 };
 
 InferenceConfig LoadInferenceConfig(const std::string &config_path);
