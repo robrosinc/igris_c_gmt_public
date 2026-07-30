@@ -186,6 +186,12 @@ ros2 run igris_c_gmt_public igris_c_gmt_public_node \
   --namespace igris_c_<your namespace>
 ```
 
+Run dds bridge
+```bash
+source /home/robros/workspace/install/setup.bash
+ros2 run igris_c_gmt_public gmr_control_mode_dds_bridge --ros-args -p dds_domain:=<domain_id> -p robot_namespace:=<ns>
+```
+
 Overall execution order:
 
 1. Run the IGRIS-C bridge/controller process so it publishes `rt/lowstate` and forwards DDS `rt/lowcmd` into the controller command buffer.
