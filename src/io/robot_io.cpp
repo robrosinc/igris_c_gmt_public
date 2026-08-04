@@ -12,6 +12,11 @@
 namespace igris_c_gmt_public {
 namespace {
 
+bool IsLowCommandMode(igris_c::msg::dds::RobotControlState state) {
+  return state == igris_c::msg::dds::RobotControlState::ROBOT_STATE_LOW ||
+         state == igris_c::msg::dds::RobotControlState::ROBOT_STATE_WALK_LOW;
+}
+
 igris_c::msg::dds::Header BuildHeader(uint32_t seq, const char *frame_id) {
   igris_c::msg::dds::Header header;
   header.seq(seq);
@@ -44,6 +49,8 @@ bool RobotIo::initialize(int domain_id, const std::string &robot_namespace,
   std::cerr << "RobotIo DDS domain_id=" << domain_id << " namespace='"
             << robot_namespace << "' lowstate_topic='"
             << igris_c_sdk::ChannelFactory::Instance()->resolve("rt/lowstate")
+            << "' robotstate_topic='"
+            << igris_c_sdk::ChannelFactory::Instance()->resolve("rt/robotstate")
             << "' lowcmd_topic='"
             << igris_c_sdk::ChannelFactory::Instance()->resolve("rt/lowcmd")
             << "'\n";
@@ -53,6 +60,15 @@ bool RobotIo::initialize(int domain_id, const std::string &robot_namespace,
           "rt/lowstate", igris_c_sdk::QosProfile::SensorData());
   if (!lowstate_sub_->init([this](const igris_c::msg::dds::LowState &state) {
         lowStateCallback(state);
+      })) {
+    return false;
+  }
+
+  robotstate_sub_ =
+      std::make_unique<igris_c_sdk::Subscriber<igris_c::msg::dds::RobotState>>(
+          "rt/robotstate", igris_c_sdk::QosProfile::Default());
+  if (!robotstate_sub_->init([this](const igris_c::msg::dds::RobotState &state) {
+        robotStateCallback(state);
       })) {
     return false;
   }
@@ -83,6 +99,19 @@ bool RobotIo::snapshotState(igris_c::msg::dds::LowState &state,
     *sequence = state_seq_;
   }
   return true;
+}
+
+RobotModeSnapshot RobotIo::snapshotRobotMode() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  RobotModeSnapshot snapshot;
+  if (!has_robot_state_) {
+    return snapshot;
+  }
+  snapshot.valid = true;
+  snapshot.state = latest_robot_state_.state();
+  snapshot.environment = latest_robot_state_.environment();
+  snapshot.low_command_mode = IsLowCommandMode(snapshot.state);
+  return snapshot;
 }
 
 bool RobotIo::publish(const InferenceCommand &command) {
@@ -120,6 +149,19 @@ void RobotIo::lowStateCallback(const igris_c::msg::dds::LowState &state) {
     std::cerr << "RobotIo received first LowState\n";
   }
   state_cv_.notify_all();
+}
+
+void RobotIo::robotStateCallback(const igris_c::msg::dds::RobotState &state) {
+  bool first_state = false;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    first_state = !has_robot_state_;
+    latest_robot_state_ = state;
+    has_robot_state_ = true;
+  }
+  if (first_state) {
+    std::cerr << "RobotIo received first RobotState\n";
+  }
 }
 
 std::string RobotIo::loadCycloneConfig(const std::string &xml_path) {

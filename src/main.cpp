@@ -15,10 +15,13 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -29,6 +32,134 @@ namespace {
 std::atomic<bool> g_running{true};
 
 void HandleSignal(int) { g_running.store(false, std::memory_order_relaxed); }
+
+void WriteCsvField(std::ostream &stream, const std::string &value) {
+  stream << '"';
+  for (const char ch : value) {
+    if (ch == '"') {
+      stream << "\"\"";
+    } else {
+      stream << ch;
+    }
+  }
+  stream << '"';
+}
+
+uint64_t NowNs() {
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+}
+
+class InferenceCsvLogger {
+public:
+  explicit InferenceCsvLogger(
+      const igris_c_gmt_public::LoggingConfig &config) {
+    if (!config.enabled) {
+      return;
+    }
+    const std::filesystem::path path(config.csv_path);
+    if (path.has_parent_path()) {
+      std::filesystem::create_directories(path.parent_path());
+    }
+    const bool write_header =
+        !std::filesystem::exists(path) || std::filesystem::file_size(path) == 0;
+    file_.open(path, std::ios::out | std::ios::app);
+    if (!file_) {
+      throw std::runtime_error("Failed to open inference CSV log: " +
+                               path.string());
+    }
+    path_ = path.string();
+    needs_header_ = write_header;
+  }
+
+  bool enabled() const { return file_.is_open(); }
+  const std::string &path() const { return path_; }
+
+  void write(uint64_t state_sequence, const std::string &motion_mode,
+             uint64_t motion_step,
+             const igris_c_gmt_public::ObservationResult &observation,
+             const igris_c_gmt_public::Vector23d &raw_actions) {
+    if (!file_) {
+      return;
+    }
+    if (needs_header_) {
+      writeHeader(observation, raw_actions);
+      needs_header_ = false;
+    }
+
+    file_ << NowNs() << ',' << state_sequence << ',';
+    WriteCsvField(file_, motion_mode);
+    file_ << ',' << motion_step;
+    for (const auto &group : observation.groups) {
+      for (Eigen::Index index = 0; index < group.second.size(); ++index) {
+        file_ << ',' << group.second(index);
+      }
+    }
+    for (Eigen::Index index = 0; index < raw_actions.size(); ++index) {
+      file_ << ',' << raw_actions(index);
+    }
+    file_ << '\n';
+    file_.flush();
+  }
+
+private:
+  void writeHeader(const igris_c_gmt_public::ObservationResult &observation,
+                   const igris_c_gmt_public::Vector23d &raw_actions) {
+    file_ << "timestamp_ns,state_seq,motion_mode,motion_step";
+    for (const auto &group : observation.groups) {
+      for (Eigen::Index index = 0; index < group.second.size(); ++index) {
+        file_ << ",obs_" << group.first << '_' << index;
+      }
+    }
+    for (Eigen::Index index = 0; index < raw_actions.size(); ++index) {
+      file_ << ",raw_action_" << index;
+    }
+    file_ << '\n';
+  }
+
+  std::ofstream file_;
+  std::string path_;
+  bool needs_header_ = false;
+};
+
+const char *RobotControlStateName(igris_c::msg::dds::RobotControlState state) {
+  using State = igris_c::msg::dds::RobotControlState;
+  switch (state) {
+  case State::ROBOT_STATE_NOT_READY:
+    return "ROBOT_STATE_NOT_READY";
+  case State::ROBOT_STATE_IDLE:
+    return "ROBOT_STATE_IDLE";
+  case State::ROBOT_STATE_STOP:
+    return "ROBOT_STATE_STOP";
+  case State::ROBOT_STATE_LOW:
+    return "ROBOT_STATE_LOW";
+  case State::ROBOT_STATE_HIGH_MOTION_ACTIVE:
+    return "ROBOT_STATE_HIGH_MOTION_ACTIVE";
+  case State::ROBOT_STATE_HIGH_MOTION_STANDBY:
+    return "ROBOT_STATE_HIGH_MOTION_STANDBY";
+  case State::ROBOT_STATE_WALK_LOW:
+    return "ROBOT_STATE_WALK_LOW";
+  case State::ROBOT_STATE_WALK_HIGH_MOTION_ACTIVE:
+    return "ROBOT_STATE_WALK_HIGH_MOTION_ACTIVE";
+  case State::ROBOT_STATE_WALK_HIGH_MOTION_STANDBY:
+    return "ROBOT_STATE_WALK_HIGH_MOTION_STANDBY";
+  case State::ROBOT_STATE_WHOLE_BODY_CONTROL:
+    return "ROBOT_STATE_WHOLE_BODY_CONTROL";
+  }
+  return "ROBOT_STATE_UNKNOWN";
+}
+
+const char *RobotEnvironmentName(igris_c::msg::dds::RobotEnvironment env) {
+  using Env = igris_c::msg::dds::RobotEnvironment;
+  switch (env) {
+  case Env::ROBOT_ENV_REAL:
+    return "ROBOT_ENV_REAL";
+  case Env::ROBOT_ENV_SIM:
+    return "ROBOT_ENV_SIM";
+  }
+  return "ROBOT_ENV_UNKNOWN";
+}
 
 void PrintUsage(const char *program) {
   std::cout << "Usage: " << program
@@ -222,6 +353,15 @@ int main(int argc, char **argv) {
       return 1;
     }
 
+    InferenceCsvLogger csv_logger(config.logging);
+    if (csv_logger.enabled()) {
+      std::cerr << "Inference CSV logging enabled path='"
+                << csv_logger.path()
+                << "' only_low_command_mode="
+                << (config.logging.only_low_command_mode ? "true" : "false")
+                << "\n";
+    }
+
     std::cout << "Waiting for first LowState on DDS topic rt/lowstate..."
               << std::endl;
     while (g_running.load(std::memory_order_relaxed) &&
@@ -322,6 +462,13 @@ int main(int argc, char **argv) {
                     std::chrono::duration<double, std::milli>(worker_end -
                                                               worker_start)
                         .count();
+                const auto robot_mode = robot_io.snapshotRobotMode();
+                if (!config.logging.only_low_command_mode ||
+                    (robot_mode.valid && robot_mode.low_command_mode)) {
+                  csv_logger.write(state_sample.sequence, motion_sample.mode,
+                                   motion_sample.step, observation,
+                                   raw_actions);
+                }
                 action_buffer.write(std::move(command), motion_sample.step,
                                     worker_ms, onnx_runner.lastInferenceMs(),
                                     motion_sample.mode);
@@ -411,12 +558,24 @@ int main(int argc, char **argv) {
                 ? onnx_sum_ms /
                       static_cast<double>(published_action_window_count)
                 : 0.0;
+        const auto robot_mode = robot_io.snapshotRobotMode();
         std::cout << std::fixed << std::setprecision(3)
                   << "state_seq=" << last_state_sequence
                   << " action_seq=" << last_action_sequence
                   << " published_actions=" << published_action_count
                   << " motion_mode=" << last_motion_mode
                   << " motion_step=" << last_motion_step;
+        if (robot_mode.valid) {
+          std::cout << " robot_state="
+                    << RobotControlStateName(robot_mode.state)
+                    << " robot_env="
+                    << RobotEnvironmentName(robot_mode.environment)
+                    << " low_command_mode="
+                    << (robot_mode.low_command_mode ? "true" : "false");
+        } else {
+          std::cout << " robot_state=N/A robot_env=N/A"
+                    << " low_command_mode=false";
+        }
         if (published_action_window_count > 0) {
           std::cout << " worker_ms=" << last_worker_ms
                     << " avg_worker_ms=" << avg_worker_ms

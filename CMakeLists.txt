@@ -76,8 +76,15 @@ target_link_libraries(
 add_executable(igris_c_gmt_public_node src/main.cpp)
 target_link_libraries(igris_c_gmt_public_node PRIVATE igris_c_gmt_public_core)
 
+add_executable(gmr_control_mode_dds_bridge
+               src/tools/gmr_control_mode_dds_bridge.cpp)
+target_link_libraries(gmr_control_mode_dds_bridge
+                      PRIVATE igris_c_sdk::igris_c_sdk rclcpp::rclcpp
+                              ${std_msgs_TARGETS})
+
 install(
   TARGETS igris_c_gmt_public_core igris_c_gmt_public_node
+          gmr_control_mode_dds_bridge
   EXPORT igris_c_gmt_public-targets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -87,6 +94,8 @@ install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 install(DIRECTORY data/ DESTINATION share/${PROJECT_NAME}/data)
 install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models)
+install(PROGRAMS scripts/plot_inference_csv.py
+        DESTINATION share/${PROJECT_NAME}/scripts)
 install(FILES README.md DESTINATION share/${PROJECT_NAME})
 
 install(

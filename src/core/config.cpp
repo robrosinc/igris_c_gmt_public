@@ -109,6 +109,19 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
                     "reference_anchor_angular_velocity_lpf_cutoff_hz",
                     config.reference_anchor_angular_velocity_lpf_cutoff_hz);
 
+  const YAML::Node logging_cfg = cfg["logging"];
+  config.logging.enabled =
+      GetOr<bool>(logging_cfg, "enabled", config.logging.enabled);
+  config.logging.csv_path = ResolvePath(
+      base_dir, GetOr<std::string>(logging_cfg, "csv_path",
+                                   config.logging.csv_path));
+  config.logging.only_low_command_mode =
+      GetOr<bool>(logging_cfg, "only_low_command_mode",
+                  config.logging.only_low_command_mode);
+  if (config.logging.enabled && config.logging.csv_path.empty()) {
+    throw std::runtime_error("logging.csv_path is required when logging.enabled is true");
+  }
+
   return config;
 }
 

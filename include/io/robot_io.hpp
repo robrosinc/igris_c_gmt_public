@@ -14,6 +14,15 @@
 
 namespace igris_c_gmt_public {
 
+struct RobotModeSnapshot {
+  bool valid = false;
+  igris_c::msg::dds::RobotControlState state =
+      igris_c::msg::dds::RobotControlState::ROBOT_STATE_NOT_READY;
+  igris_c::msg::dds::RobotEnvironment environment =
+      igris_c::msg::dds::RobotEnvironment::ROBOT_ENV_REAL;
+  bool low_command_mode = false;
+};
+
 class RobotIo {
 public:
   bool initialize(int domain_id, const std::string &robot_namespace,
@@ -22,22 +31,28 @@ public:
   bool snapshotState(igris_c::msg::dds::LowState &state) const;
   bool snapshotState(igris_c::msg::dds::LowState &state,
                      uint64_t *sequence) const;
+  RobotModeSnapshot snapshotRobotMode() const;
   bool publish(const InferenceCommand &command);
 
 private:
   void lowStateCallback(const igris_c::msg::dds::LowState &state);
+  void robotStateCallback(const igris_c::msg::dds::RobotState &state);
   static std::string loadCycloneConfig(const std::string &xml_path);
 
 private:
   mutable std::mutex state_mutex_;
   std::condition_variable state_cv_;
   igris_c::msg::dds::LowState latest_state_;
+  igris_c::msg::dds::RobotState latest_robot_state_;
   bool has_state_ = false;
+  bool has_robot_state_ = false;
   uint64_t state_seq_ = 0;
   uint32_t publish_seq_ = 0;
 
   std::unique_ptr<igris_c_sdk::Subscriber<igris_c::msg::dds::LowState>>
       lowstate_sub_;
+  std::unique_ptr<igris_c_sdk::Subscriber<igris_c::msg::dds::RobotState>>
+      robotstate_sub_;
   std::unique_ptr<igris_c_sdk::Publisher<igris_c::msg::dds::LowCmd>>
       lowcmd_pub_;
 };

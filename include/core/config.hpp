@@ -15,6 +15,12 @@ struct MotionSourceConfig {
   bool loop = true;
 };
 
+struct LoggingConfig {
+  bool enabled = false;
+  std::string csv_path;
+  bool only_low_command_mode = true;
+};
+
 struct RosMotionConfig {
   std::size_t domain_id = 0;
   std::string node_name = "igris_c_gmt_public_motion_subscriber";
@@ -40,6 +46,7 @@ struct InferenceConfig {
   double reference_joint_velocity_lpf_cutoff_hz = 0.0;
   double reference_anchor_linear_velocity_lpf_cutoff_hz = 0.0;
   double reference_anchor_angular_velocity_lpf_cutoff_hz = 0.0;
+  LoggingConfig logging;
 };
 
 InferenceConfig LoadInferenceConfig(const std::string &config_path);
