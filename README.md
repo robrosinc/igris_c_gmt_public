@@ -8,8 +8,10 @@ External low-level inference package for IGRIS-C teleoperation.
 - Runs a policy ONNX model in a control loop.
 - Publishes `igris_c_sdk::LowCmd`.
 - Loads observation layout from `config/obs.yaml` and action settings from `config/action.yaml`.
-- Includes an example teleoperation ONNX model under `models/wbc_teleop/0721/policy.onnx`.
-- Does not switch robot modes automatically.
+- Includes an example teleoperation ONNX model under `models/wbc_teleop/student_126.onnx`.
+- The inference node does not switch robot modes automatically. Use the optional
+  GMR control-mode DDS bridge if robot mode control should come from the PICO
+  hand controller.
 - Does not depend on internal `igris_c` controller types.
 
 ## Current Motion Ingress
@@ -163,7 +165,7 @@ Use `motion_source.loop: true` if you want the recorded clip to repeat. With `lo
 The default config uses this package's bundled example model:
 
 ```text
-models/wbc_teleop/0721/policy.onnx
+models/wbc_teleop/student_126.onnx
 ```
 
 We included one WBC model trained on our side, so the default config should run as-is.
@@ -182,21 +184,30 @@ Run recorded ONNX motion replay:
 ```bash
 source /home/robros/workspace/install/setup.bash
 ros2 run igris_c_gmt_public igris_c_gmt_public_node \
-  --config "$(ros2 pkg prefix igris_c_gmt_public)/share/igris_c_gmt_public/config/params.yaml" \
-  --namespace igris_c_<your namespace>
+  --config "$(ros2 pkg prefix igris_c_gmt_public)/config/params.yaml" \
+  --namespace igris_c_<your_namespace>
 ```
 
-Run dds bridge
+Run the GMR control-mode DDS bridge. This is a small bridge that converts PICO
+hand-controller events into robot control-mode DDS requests.
+
 ```bash
 source /home/robros/workspace/install/setup.bash
-ros2 run igris_c_gmt_public gmr_control_mode_dds_bridge --ros-args -p dds_domain:=<domain_id> -p robot_namespace:=<ns>
+ros2 run igris_c_gmt_public gmr_control_mode_dds_bridge --ros-args -p dds_domain_id:=<domain_id> -p robot_namespace:=<your_namespace>
 ```
+
+PICO controls:
+
+- Press `A` to enable control input.
+- While enabled, press `B` to enter low-level mode for teleoperation.
+- Press the right stick button to stop in joint-hold mode.
+- Press the left stick button to move to the home pose.
 
 Overall execution order:
 
 1. Run the IGRIS-C bridge/controller process so it publishes `rt/lowstate` and forwards DDS `rt/lowcmd` into the controller command buffer.
 2. Run `igris_c_gmt_public`.
-3. Switch the robot to LOW_LEVEL mode when ready.
+3. Switch the robot to LOW_LEVEL mode when ready, either manually or through the GMR control-mode DDS bridge.
 
 For live ROS 2 teleoperation, set `motion_source.type: "ros2"`, run the GMR teleop process, then run the Redis bridge before `igris_c_gmt_public`.
 

@@ -27,11 +27,11 @@ igris_c_gmt_public:
     #   onnx_replay: recorded motion ONNX replay
     #   csv_replay: CSV replay
     #   null: no motion source; policy worker waits
-    type: "onnx_replay"
+    type: "ros2"
     # Used when type == csv_replay.
     csv_path: ""
     # Used when type == onnx_replay. Also used as recorded fallback source in ros2 mode.
-    onnx_path: "../data/onnx/recorded_arms.onnx"
+    onnx_path: "../data/onnx/recorded_walk_4.onnx"
     # Used when type == ros2.
     ros_config_path: "ros.yaml"
     # Used by CSV replay and as fallback if motion ONNX metadata has no motion_fps.
@@ -43,7 +43,7 @@ igris_c_gmt_public:
 
   policy:
     # Policy ONNX file. Input names must match obs.yaml group names.
-    onnx_path: "../models/wbc_teleop/student_129.onnx"
+    onnx_path: "../models/wbc_teleop/student_130.onnx"
 
   filters:
     # Low-pass filter cutoffs for observation velocities. Set <= 0 to disable.
@@ -54,7 +54,7 @@ igris_c_gmt_public:
     reference_anchor_angular_velocity_lpf_cutoff_hz: 8.0
 
   logging:
-    enabled: true
+    enabled: false
     # Set from params only. Relative paths are resolved from this params.yaml.
     csv_path: "/home/robros/ros_ws/igris_c_gmt_public/log/inference_observation_action.csv"
     # false: log every successful inference. true: log only when
