@@ -43,7 +43,7 @@ igris_c_gmt_public:
 
   policy:
     # Policy ONNX file. Input names must match obs.yaml group names.
-    onnx_path: "../models/wbc_teleop/student_130.onnx"
+    onnx_path: "../models/wbc_teleop/student_132.onnx"
 
   filters:
     # Low-pass filter cutoffs for observation velocities. Set <= 0 to disable.
