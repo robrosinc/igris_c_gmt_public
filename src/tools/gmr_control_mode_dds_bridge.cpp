@@ -1,40 +1,17 @@
 #include "igris_c_sdk/channel_factory.hpp"
+#include "igris_c_sdk/igris_c_client.hpp"
 #include "igris_c_sdk/igris_c_msgs.hpp"
-#include "igris_c_sdk/publisher.hpp"
-#include "igris_c_sdk/qos.hpp"
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
 
-#include <array>
-#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <stdexcept>
 #include <string>
 
 namespace {
-
-igris_c::msg::dds::Header BuildHeader(uint32_t seq, const char *frame_id) {
-  igris_c::msg::dds::Header header;
-  header.seq(seq);
-
-  const auto now = std::chrono::system_clock::now().time_since_epoch();
-  const auto ns = static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-  header.sec(static_cast<uint32_t>(ns / 1000000000ULL));
-  header.nanosec(static_cast<uint32_t>(ns % 1000000000ULL));
-
-  std::array<char, 256> frame_id_array{};
-  for (std::size_t i = 0; i < frame_id_array.size() - 1 && frame_id[i] != '\0';
-       ++i) {
-    frame_id_array[i] = frame_id[i];
-  }
-  header.frame_id(frame_id_array);
-  return header;
-}
 
 std::string ReadFile(const std::string &path) {
   if (path.empty()) {
@@ -73,8 +50,6 @@ public:
         declare_parameter<std::string>("stop_topic", "/gmr/stop");
     const std::string go_home_topic =
         declare_parameter<std::string>("go_home_topic", "/gmr/go_home");
-    const std::string request_topic = declare_parameter<std::string>(
-        "dds_request_topic", "rt/service/control_mode/request");
     const int dds_domain_id =
         declare_parameter<int>("dds_domain_id", DefaultDomainId());
     const std::string robot_namespace =
@@ -82,6 +57,7 @@ public:
     const std::string cyclonedds_xml_path =
         declare_parameter<std::string>("cyclonedds_xml_path", "");
     const int qos_depth = declare_parameter<int>("qos_depth", 10);
+    service_timeout_ms_ = declare_parameter<int>("service_timeout_ms", 3000);
 
     igris_c_sdk::ChannelFactory::Instance()->Init(
         dds_domain_id, robot_namespace, ReadFile(cyclonedds_xml_path));
@@ -89,12 +65,7 @@ public:
       throw std::runtime_error("failed to initialize DDS ChannelFactory");
     }
 
-    control_mode_pub_ = std::make_unique<
-        igris_c_sdk::Publisher<igris_c::msg::dds::ControlModeCommandRequest>>(
-        request_topic, igris_c_sdk::QosProfile::Services());
-    if (!control_mode_pub_->init()) {
-      throw std::runtime_error("failed to initialize control mode DDS publisher");
-    }
+    client_.Init();
 
     auto event_qos = rclcpp::SensorDataQoS();
     event_qos.keep_last(qos_depth);
@@ -130,13 +101,17 @@ public:
 
     RCLCPP_INFO(get_logger(),
                 "listening lowcmd_start=%s stop=%s go_home=%s; DDS request "
-                "topic=%s domain_id=%d namespace='%s'",
+                "topic=%s response_topic=%s domain_id=%d namespace='%s' "
+                "service_timeout_ms=%d",
                 lowcmd_start_topic.c_str(), stop_topic.c_str(),
                 go_home_topic.c_str(),
                 igris_c_sdk::ChannelFactory::Instance()
-                    ->resolve(request_topic)
+                    ->resolve("rt/service/control_mode/request")
                     .c_str(),
-                dds_domain_id, robot_namespace.c_str());
+                igris_c_sdk::ChannelFactory::Instance()
+                    ->resolve("rt/service/control_mode/response")
+                    .c_str(),
+                dds_domain_id, robot_namespace.c_str(), service_timeout_ms_);
   }
 
 private:
@@ -144,39 +119,25 @@ private:
       const std::string &label,
       igris_c::msg::dds::ControlModeCommandType command_type,
       const std::string &preset_id = "") {
-    if (!control_mode_pub_) {
-      RCLCPP_ERROR(get_logger(), "control mode DDS publisher is not initialized");
-      return;
-    }
-
-    const uint32_t seq = ++request_seq_;
-    igris_c::msg::dds::ControlModeCommandRequest request;
-    request.header(BuildHeader(seq, "gmr_control_mode_dds_bridge"));
-    request.request_id("gmr_control_mode_dds_bridge_" + label + "_" +
-                       std::to_string(seq));
-    request.command_type(command_type);
-    request.preset_id(preset_id);
-    request.is_cyclic(false);
-
-    if (!control_mode_pub_->write(request)) {
+    const auto response = client_.SendControlModeCommand(
+        command_type, preset_id, false, service_timeout_ms_);
+    if (!response.success()) {
       RCLCPP_ERROR(get_logger(),
-                   "failed to publish %s control mode DDS request: "
-                   "request_id=%s",
-                   label.c_str(), request.request_id().c_str());
+                   "%s control mode request failed: request_id=%s "
+                   "error_code=%d message='%s'",
+                   label.c_str(), response.request_id().c_str(),
+                   response.error_code(), response.message().c_str());
       return;
     }
 
     RCLCPP_INFO(get_logger(),
-                "published %s control mode DDS request: request_id=%s "
-                "command_type=%u preset_id='%s'",
-                label.c_str(), request.request_id().c_str(),
-                static_cast<unsigned>(command_type), preset_id.c_str());
+                "%s control mode request accepted: request_id=%s message='%s'",
+                label.c_str(), response.request_id().c_str(),
+                response.message().c_str());
   }
 
-  uint32_t request_seq_ = 0;
-  std::unique_ptr<
-      igris_c_sdk::Publisher<igris_c::msg::dds::ControlModeCommandRequest>>
-      control_mode_pub_;
+  int service_timeout_ms_ = 3000;
+  igris_c_sdk::IgrisC_Client client_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr lowcmd_start_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr stop_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr go_home_sub_;
