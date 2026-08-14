@@ -437,6 +437,8 @@ int main(int argc, char **argv) {
               igris_c_gmt_public::ObservationInput observation_input;
               observation_input.state = state_sample;
               observation_input.motion_frames = std::move(motion_sample.frames);
+              observation_input.motion_frame_offsets =
+                  std::move(motion_sample.frame_offsets);
               observation_input.q_default = observation_builder.qDefault();
               observation_input.last_actions = action_builder.lastActions();
 

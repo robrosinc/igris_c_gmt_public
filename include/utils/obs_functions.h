@@ -4,6 +4,7 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -67,10 +68,41 @@ inline Eigen::VectorXd ToVectorXd(const std::vector<double> &value) {
 }
 
 inline const MotionFrame &LatestMotionFrame(const ObservationInput &input) {
-  if (input.motion_frames.empty() || !input.motion_frames.front().valid) {
+  if (input.motion_frames.empty()) {
+    throw std::runtime_error("observation term requires a valid motion frame");
+  }
+
+  const auto offset_it = std::find(input.motion_frame_offsets.begin(),
+                                   input.motion_frame_offsets.end(), 0);
+  if (offset_it != input.motion_frame_offsets.end()) {
+    const std::size_t index = static_cast<std::size_t>(
+        std::distance(input.motion_frame_offsets.begin(), offset_it));
+    if (index < input.motion_frames.size() && input.motion_frames[index].valid) {
+      return input.motion_frames[index];
+    }
+  }
+
+  if (!input.motion_frames.front().valid) {
     throw std::runtime_error("observation term requires a valid motion frame");
   }
   return input.motion_frames.front();
+}
+
+inline const MotionFrame &MotionFrameAtOffset(const ObservationInput &input,
+                                              int offset) {
+  const auto offset_it = std::find(input.motion_frame_offsets.begin(),
+                                   input.motion_frame_offsets.end(), offset);
+  if (offset_it == input.motion_frame_offsets.end()) {
+    throw std::runtime_error("motion_frame_stack missing requested offset " +
+                             std::to_string(offset));
+  }
+  const std::size_t index = static_cast<std::size_t>(
+      std::distance(input.motion_frame_offsets.begin(), offset_it));
+  if (index >= input.motion_frames.size() || !input.motion_frames[index].valid) {
+    throw std::runtime_error("motion_frame_stack offset " +
+                             std::to_string(offset) + " has no valid frame");
+  }
+  return input.motion_frames[index];
 }
 
 inline Eigen::Matrix3d RotateWithY(double angle_rad) {
@@ -382,6 +414,9 @@ inline const std::unordered_map<std::string, ObsFunction> &Registry() {
       {"motion_anchor_orientation", MotionAnchorOrientation},
       {"motion_anchor_height", MotionAnchorHeight},
       {"motion_root_state", MotionRootState},
+      {"motion_anchor_pos_z", MotionAnchorHeight},
+      {"motion_anchor_ori_b", MotionRootState},
+      {"motion_body_pos_b", MotionBodyPos},
   };
   return registry;
 }

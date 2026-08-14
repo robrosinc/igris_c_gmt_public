@@ -2,9 +2,12 @@
 
 #include "yaml-cpp/yaml.h"
 
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace igris_c_gmt_public {
 namespace {
@@ -40,6 +43,87 @@ void CopyVector23(const YAML::Node &node, const char *key, Vector23d &target) {
   for (Eigen::Index i = 0; i < target.size(); ++i) {
     target(i) = value[static_cast<std::size_t>(i)].as<double>();
   }
+}
+
+std::vector<int> BuildMotionFrameOffsets(const YAML::Node &params) {
+  const int past_frame_count = GetOr<int>(params, "past_frame_count", 0);
+  const int future_frame_count = GetOr<int>(params, "future_frame_count", 0);
+  const int stride = GetOr<int>(params, "stride", 1);
+  const bool include_current = GetOr<bool>(params, "include_current", true);
+  if (past_frame_count < 0 || future_frame_count < 0 || stride <= 0) {
+    throw std::runtime_error(
+        "motion_frame_stack requires non-negative frame counts and positive stride");
+  }
+
+  std::vector<int> offsets;
+  for (int offset = -past_frame_count * stride; offset < 0; offset += stride) {
+    offsets.push_back(offset);
+  }
+  if (include_current) {
+    offsets.push_back(0);
+  }
+  for (int i = 1; i <= future_frame_count; ++i) {
+    offsets.push_back(i * stride);
+  }
+  if (offsets.empty()) {
+    throw std::runtime_error(
+        "motion_frame_stack requires at least one frame offset");
+  }
+  return offsets;
+}
+
+obs_functions::ObsFunction MakeMotionFrameStackFunction(
+    const YAML::Node &params,
+    const std::unordered_map<std::string, obs_functions::ObsFunction>
+        &registry) {
+  const std::string term_func_name =
+      GetOr<std::string>(params, "term_func", "");
+  if (term_func_name.empty()) {
+    throw std::runtime_error("motion_frame_stack.params.term_func is required");
+  }
+  if (params && params["term_params"]) {
+    throw std::runtime_error(
+        "motion_frame_stack.params.term_params is not supported in deploy");
+  }
+
+  const auto term_it = registry.find(term_func_name);
+  if (term_it == registry.end() || term_func_name == "motion_frame_stack") {
+    throw std::runtime_error("Unknown motion_frame_stack term_func: " +
+                             term_func_name);
+  }
+
+  const obs_functions::ObsFunction term_func = term_it->second;
+  const std::vector<int> offsets = BuildMotionFrameOffsets(params);
+  return [term_func, offsets](const ObservationInput &input) {
+    std::vector<Eigen::VectorXd> frame_values;
+    frame_values.reserve(offsets.size());
+    Eigen::Index total_size = 0;
+    Eigen::Index frame_value_size = -1;
+
+    for (int offset : offsets) {
+      ObservationInput frame_input = input;
+      frame_input.motion_frames = {obs_functions::MotionFrameAtOffset(input,
+                                                                       offset)};
+      frame_input.motion_frame_offsets = {0};
+      Eigen::VectorXd value = term_func(frame_input);
+      if (frame_value_size < 0) {
+        frame_value_size = value.size();
+      } else if (value.size() != frame_value_size) {
+        throw std::runtime_error(
+            "motion_frame_stack term produced inconsistent frame sizes");
+      }
+      total_size += value.size();
+      frame_values.push_back(std::move(value));
+    }
+
+    Eigen::VectorXd stacked(total_size);
+    Eigen::Index output_offset = 0;
+    for (const Eigen::VectorXd &value : frame_values) {
+      stacked.segment(output_offset, value.size()) = value;
+      output_offset += value.size();
+    }
+    return stacked;
+  };
 }
 
 } // namespace
@@ -83,12 +167,17 @@ int ObservationBuilder::configure(const InferenceConfig &config) {
           throw std::runtime_error(
               "observation term must define function and positive history");
         }
-        const auto it = registry.find(term.function_name);
-        if (it == registry.end()) {
-          throw std::runtime_error("Unknown observation function: " +
-                                   term.function_name);
+        if (term.function_name == "motion_frame_stack") {
+          term.function =
+              MakeMotionFrameStackFunction(term_node["params"], registry);
+        } else {
+          const auto it = registry.find(term.function_name);
+          if (it == registry.end()) {
+            throw std::runtime_error("Unknown observation function: " +
+                                     term.function_name);
+          }
+          term.function = it->second;
         }
-        term.function = it->second;
         group.terms.push_back(std::move(term));
       }
       groups_.push_back(std::move(group));
@@ -120,7 +209,8 @@ int ObservationBuilder::build(const ObservationInput &input,
   prepared_input.q_default = q_default_;
 
   result = ObservationResult{};
-  const MotionFrame &latest_motion_frame = prepared_input.motion_frames.front();
+  const MotionFrame &latest_motion_frame =
+      obs_functions::LatestMotionFrame(prepared_input);
   for (std::size_t i = 0; i < latest_motion_frame.joint_position.size(); ++i) {
     result.motion_joint_position(static_cast<Eigen::Index>(i)) =
         latest_motion_frame.joint_position[i];

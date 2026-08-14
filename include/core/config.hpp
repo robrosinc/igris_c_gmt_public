@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace igris_c_gmt_public {
 
@@ -12,6 +13,7 @@ struct MotionSourceConfig {
   std::string ros_config_path;
   double fps = 50.0;
   double frame_timeout_ms = 100.0;
+  std::vector<int> frame_stack_offsets{0};
   bool loop = true;
 };
 

@@ -48,6 +48,29 @@ bool MotionFrameSource::getFrameStackAtStep(std::size_t step,
   return true;
 }
 
+bool MotionFrameSource::getFrameStackAtStep(std::size_t step,
+                                            std::vector<MotionFrame> &frames,
+                                            const std::vector<int> &offsets) {
+  frames.clear();
+  if (offsets.empty()) {
+    return false;
+  }
+
+  frames.reserve(offsets.size());
+  for (int offset : offsets) {
+    const std::size_t frame_step =
+        offset < 0 && static_cast<std::size_t>(-offset) > step
+            ? 0
+            : static_cast<std::size_t>(static_cast<int64_t>(step) + offset);
+    MotionFrame frame;
+    if (!getFrameAtStep(frame_step, frame)) {
+      return false;
+    }
+    frames.push_back(frame);
+  }
+  return true;
+}
+
 namespace {
 
 using Clock = std::chrono::steady_clock;

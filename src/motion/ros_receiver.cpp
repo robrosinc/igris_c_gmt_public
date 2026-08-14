@@ -149,6 +149,44 @@ bool ExtractStringArray(const std::string &payload, const std::string &key,
   return !values.empty();
 }
 
+bool ExtractScalarNumber(const std::string &payload, const std::string &key,
+                         double &value) {
+  const std::size_t key_pos = FindPayloadKey(payload, key);
+  if (key_pos == std::string::npos) {
+    return false;
+  }
+  const std::size_t colon_pos = payload.find(':', key_pos);
+  if (colon_pos == std::string::npos) {
+    return false;
+  }
+
+  std::size_t number_begin = std::string::npos;
+  for (std::size_t i = colon_pos + 1; i < payload.size(); ++i) {
+    if (IsNumericChar(payload[i])) {
+      number_begin = i;
+      break;
+    }
+    if (payload[i] == ',' || payload[i] == '}' || payload[i] == ']') {
+      return false;
+    }
+  }
+  if (number_begin == std::string::npos) {
+    return false;
+  }
+
+  std::size_t number_end = number_begin;
+  while (number_end < payload.size() && IsNumericChar(payload[number_end])) {
+    ++number_end;
+  }
+
+  try {
+    value = std::stod(payload.substr(number_begin, number_end - number_begin));
+  } catch (const std::exception &) {
+    return false;
+  }
+  return true;
+}
+
 Eigen::Matrix3d RotationMatrixFromWxyz(const std::array<double, 4> &quat_wxyz) {
   Eigen::Quaterniond quaternion(quat_wxyz[0], quat_wxyz[1], quat_wxyz[2],
                                 quat_wxyz[3]);
@@ -284,6 +322,13 @@ MotionFrame DecodeRetargetFramePayload(const std::string &payload,
                                        uint64_t seq) {
   MotionFrame frame;
   frame.seq = seq;
+
+  double source_frame_id = 0.0;
+  if (ExtractScalarNumber(payload, "frame_idx", source_frame_id) ||
+      ExtractScalarNumber(payload, "frame_index", source_frame_id) ||
+      ExtractScalarNumber(payload, "unix_ms", source_frame_id)) {
+    frame.seq = static_cast<uint64_t>(std::max(0.0, source_frame_id));
+  }
 
   const bool has_body_names =
       ExtractStringArray(payload, "link_body_list", frame.body_names);
@@ -473,6 +518,10 @@ void RosMotionReceiver::callback(const std_msgs::msg::String &msg) {
   const uint64_t seq = ++seq_;
   MotionFrame frame = DecodeRetargetFramePayload(msg.data, seq);
   if (!frame.valid) {
+    return;
+  }
+  const std::shared_ptr<const MotionFrame> latest = buffer_->readLatest();
+  if (latest && latest->seq == frame.seq) {
     return;
   }
   buffer_->write(std::move(frame));

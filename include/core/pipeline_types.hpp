@@ -27,6 +27,7 @@ struct ProcessedState {
 struct ObservationInput {
   ProcessedState state;
   std::vector<MotionFrame> motion_frames;
+  std::vector<int> motion_frame_offsets{0};
   Vector23d q_default = Vector23d::Zero();
   Vector23d last_actions = Vector23d::Zero();
 };

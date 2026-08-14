@@ -41,7 +41,6 @@ enum JointIndex {
 };
 
 inline constexpr int kRlNumJointActions = 23;
-inline constexpr int kMotionFrameStackLength = 1;
 inline constexpr int kMotionRootStateObsSize = 6;
 
 using VectorQd = Eigen::Matrix<double, kModelDof, 1>;

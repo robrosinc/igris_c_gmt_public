@@ -22,6 +22,7 @@ struct MotionHandlerOutput {
   uint64_t step = 0;
   std::string mode = "waiting";
   std::vector<MotionFrame> frames;
+  std::vector<int> frame_offsets;
 };
 
 class MotionHandler {

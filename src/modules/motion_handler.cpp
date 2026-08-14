@@ -93,6 +93,9 @@ void MotionHandler::reset() {
   if (recorded_source_) {
     recorded_source_->reset();
   }
+  if (ros_motion_buffer_) {
+    ros_motion_buffer_->clearHistory();
+  }
 }
 
 void MotionHandler::stop() {
@@ -110,6 +113,7 @@ bool MotionHandler::read(MotionHandlerOutput &output,
                          std::chrono::steady_clock::time_point now) {
   output = MotionHandlerOutput{};
   output.step = motion_step_;
+  output.frame_offsets = config_.motion_source.frame_stack_offsets;
 
   bool fresh = false;
   bool mode_changed = false;
@@ -124,13 +128,23 @@ bool MotionHandler::read(MotionHandlerOutput &output,
       }
       fresh = recorded_source_->getFrameStackAtStep(
           static_cast<std::size_t>(motion_step_), output.frames,
-          static_cast<std::size_t>(kMotionFrameStackLength));
+          config_.motion_source.frame_stack_offsets);
       motion_mode = fresh ? "recorded" : "waiting";
     } else {
       const std::shared_ptr<const MotionFrame> motion_frame =
           ros_receiver_->readLatest();
       if (motion_frame && motion_frame->valid) {
         if (!live_motion_seen_ || motion_frame->seq != last_live_motion_seq_) {
+          const auto gap_ms =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  now - last_live_motion_wall_time_)
+                  .count();
+          if (live_motion_seen_ &&
+              static_cast<double>(gap_ms) >
+                  config_.motion_source.frame_timeout_ms &&
+              ros_motion_buffer_) {
+            ros_motion_buffer_->keepLatestOnly();
+          }
           live_motion_seen_ = true;
           last_live_motion_seq_ = motion_frame->seq;
           last_live_motion_wall_time_ = now;
@@ -143,8 +157,10 @@ bool MotionHandler::read(MotionHandlerOutput &output,
         fresh = static_cast<double>(live_age_ms) <=
                 config_.motion_source.frame_timeout_ms;
         if (fresh) {
-          output.frames.assign(
-              static_cast<std::size_t>(kMotionFrameStackLength), *motion_frame);
+          fresh = ros_motion_buffer_ &&
+                  ros_motion_buffer_->readOffsetStack(
+                      config_.motion_source.frame_stack_offsets,
+                      output.frames);
         }
         motion_mode = fresh ? "live" : "waiting";
       }
@@ -157,7 +173,7 @@ bool MotionHandler::read(MotionHandlerOutput &output,
     }
     fresh = replay_source_->getFrameStackAtStep(
         static_cast<std::size_t>(motion_step_), output.frames,
-        static_cast<std::size_t>(kMotionFrameStackLength));
+        config_.motion_source.frame_stack_offsets);
     motion_mode = fresh ? config_.motion_source.type : "waiting";
   }
 

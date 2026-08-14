@@ -3,8 +3,10 @@
 #include "yaml-cpp/yaml.h"
 
 #include <filesystem>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace igris_c_gmt_public {
 namespace {
@@ -39,6 +41,67 @@ T GetOr(const YAML::Node &node, const char *key, const T &default_value) {
   return node[key].as<T>();
 }
 
+std::vector<int> MotionFrameOffsetsFromTerm(const YAML::Node &term_node) {
+  const std::string function_name = GetOr<std::string>(term_node, "function", "");
+  if (function_name != "motion_frame_stack") {
+    return {0};
+  }
+
+  const YAML::Node params = term_node["params"];
+  const int past_frame_count = GetOr<int>(params, "past_frame_count", 0);
+  const int future_frame_count = GetOr<int>(params, "future_frame_count", 0);
+  const int stride = GetOr<int>(params, "stride", 1);
+  const bool include_current = GetOr<bool>(params, "include_current", true);
+  if (past_frame_count < 0 || future_frame_count < 0 || stride <= 0) {
+    throw std::runtime_error(
+        "motion_frame_stack requires non-negative frame counts and positive stride");
+  }
+
+  std::vector<int> offsets;
+  for (int offset = -past_frame_count * stride; offset < 0; offset += stride) {
+    offsets.push_back(offset);
+  }
+  if (include_current) {
+    offsets.push_back(0);
+  }
+  for (int i = 1; i <= future_frame_count; ++i) {
+    offsets.push_back(i * stride);
+  }
+  if (offsets.empty()) {
+    throw std::runtime_error(
+        "motion_frame_stack requires at least one frame offset");
+  }
+  return offsets;
+}
+
+std::vector<int> CollectMotionFrameOffsets(const std::string &obs_config_path) {
+  const YAML::Node root = YAML::LoadFile(obs_config_path);
+  const YAML::Node obs = root["igris_c_gmt_public_observation"];
+  if (!obs) {
+    throw std::runtime_error(
+        "obs.yaml must contain igris_c_gmt_public_observation root");
+  }
+
+  std::set<int> offsets;
+  offsets.insert(0);
+  const YAML::Node groups = obs["groups"];
+  if (!groups || !groups.IsSequence()) {
+    return {0};
+  }
+  for (const YAML::Node &group_node : groups) {
+    const YAML::Node terms = group_node["terms"];
+    if (!terms || !terms.IsSequence()) {
+      continue;
+    }
+    for (const YAML::Node &term_node : terms) {
+      for (int offset : MotionFrameOffsetsFromTerm(term_node)) {
+        offsets.insert(offset);
+      }
+    }
+  }
+  return std::vector<int>(offsets.begin(), offsets.end());
+}
+
 } // namespace
 
 InferenceConfig LoadInferenceConfig(const std::string &config_path) {
@@ -66,6 +129,8 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
   const YAML::Node observation_cfg = cfg["observation"];
   config.obs_config_path = ResolvePath(
       base_dir, GetOr<std::string>(observation_cfg, "config_path", "obs.yaml"));
+  config.motion_source.frame_stack_offsets =
+      CollectMotionFrameOffsets(config.obs_config_path);
 
   const YAML::Node action_cfg = cfg["action"];
   config.action_config_path = ResolvePath(
