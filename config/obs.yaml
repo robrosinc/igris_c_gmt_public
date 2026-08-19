@@ -9,53 +9,20 @@ igris_c_gmt_public_observation:
     0.0, 0.3, 0.3, -0.1, -0.1, 0.0, 0.0
   ]
 
-  group_presets:
-    legacy_single_ref: &legacy_single_ref
-      - name: obs
-        terms:
-          - { function: joint_pos_rel, history: 20 }
-          - { function: joint_vel, history: 20 }
-          - { function: projected_gravity, history: 20 }
-          - { function: base_ang_vel, history: 20 }
-          - { function: last_actions, history: 20 }
-          - { function: motion_joint_pos, history: 1 }
-          - { function: motion_joint_vel, history: 1 }
-          - { function: motion_anchor_height, history: 1 }
-          - { function: motion_root_state, history: 1 }
-          - { function: motion_body_pos, history: 1 }
-          - { function: motion_anchor_lin_vel_b, history: 1 }
-          - { function: motion_anchor_ang_vel_b, history: 1 }
-
-    student_ref_stack: &student_ref_stack
-      - name: obs
-        terms:
-          - { function: joint_pos_rel, history: 20 }
-          - { function: joint_vel, history: 20 }
-          - { function: projected_gravity, history: 20 }
-          - { function: base_ang_vel, history: 20 }
-          - { function: last_actions, history: 20 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_joint_pos, future_frame_count: 5, stride: 2 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_joint_vel, future_frame_count: 5, stride: 2 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_anchor_pos_z, future_frame_count: 5, stride: 2 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_anchor_ori_b, future_frame_count: 5, stride: 2 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_body_pos_b, future_frame_count: 5, stride: 2 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_anchor_lin_vel_b, future_frame_count: 5, stride: 2 }
-          - function: motion_frame_stack
-            history: 1
-            params: { term_func: motion_anchor_ang_vel_b, future_frame_count: 5, stride: 2 }
-
-  # Select one preset:
-  # groups: *legacy_single_ref
-  groups: *student_ref_stack
+  groups:
+    # Each group name must match an ONNX input name. Terms are concatenated
+    # in this exact order after applying each term's rolling history.
+    - name: obs
+      terms:
+        - { function: joint_pos_rel, history: 20 }
+        - { function: joint_vel, history: 20 }
+        - { function: projected_gravity, history: 20 }
+        - { function: base_ang_vel, history: 20 }
+        - { function: last_actions, history: 20 }
+        - { function: motion_joint_pos, history: 1 }
+        - { function: motion_joint_vel, history: 1 }
+        - { function: motion_anchor_height, history: 1 }
+        - { function: motion_root_state, history: 1 }
+        - { function: motion_body_pos, history: 1 }
+        - { function: motion_anchor_lin_vel_b, history: 1 }
+        - { function: motion_anchor_ang_vel_b, history: 1 }

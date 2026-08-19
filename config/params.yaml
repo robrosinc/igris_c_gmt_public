@@ -31,7 +31,7 @@ igris_c_gmt_public:
     # Used when type == csv_replay.
     csv_path: ""
     # Used when type == onnx_replay. Also used as recorded fallback source in ros2 mode.
-    onnx_path: "../data/onnx/recorded_walk_5.onnx"
+    onnx_path: "../data/onnx/recorded_walk_4.onnx"
     # Used when type == ros2.
     ros_config_path: "ros.yaml"
     # Used by CSV replay and as fallback if motion ONNX metadata has no motion_fps.
@@ -43,7 +43,7 @@ igris_c_gmt_public:
 
   policy:
     # Policy ONNX file. Input names must match obs.yaml group names.
-    onnx_path: "../models/wbc_teleop/student_137.onnx"
+    onnx_path: "../models/wbc_teleop/student_132.onnx"
 
   filters:
     # Low-pass filter cutoffs for observation velocities. Set <= 0 to disable.
