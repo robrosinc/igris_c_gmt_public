@@ -8,10 +8,11 @@ External low-level inference package for IGRIS-C teleoperation.
 - Runs a policy ONNX model in a control loop.
 - Publishes `igris_c_sdk::LowCmd`.
 - Loads observation layout from `config/obs.yaml` and action settings from `config/action.yaml`.
-- Includes an example teleoperation ONNX model under `models/wbc_teleop/student_126.onnx`.
-- The inference node does not switch robot modes automatically. Use the optional
-  GMR control-mode DDS bridge if robot mode control should come from the PICO
-  hand controller.
+- Includes an example teleoperation ONNX model under `models/wbc_teleop/0811/policy.onnx`.
+- In `onnx_replay` mode, the inference node switches the robot into low-level
+  mode automatically.
+- In `ros2` live teleoperation mode, low-level mode is entered manually through
+  the optional GMR control-mode DDS bridge from the PICO hand controller.
 - Does not depend on internal `igris_c` controller types.
 
 ## Current Motion Ingress
@@ -40,15 +41,16 @@ The node is split into small modules:
 1. The main loop runs at `loop.control_hz`.
 2. It reads the newest DDS `LowState` from `RobotIo`.
 3. When the state sequence changes, it updates `StateHandler`.
-4. The worker thread wakes at `loop.policy_hz`.
-5. The worker reads the latest processed state.
-6. `MotionHandler` supplies either the latest live ROS motion frame or the replay frame at the current motion step.
-7. `ObservationBuilder` builds the ONNX input groups from the configured observation terms.
-8. `OnnxRunner` runs the policy and returns the raw 23-element action vector.
-9. `ActionBuilder` converts the raw action into desired joint positions and `LowCmd` fields.
-10. The worker writes the command into the action buffer.
-11. The main loop publishes the command once when the action buffer sequence changes.
-12. `MotionHandler::advance()` increments the motion replay clock only after a command is successfully built.
+4. After the first `LowState`, `RobotIo` requests `LOW_LEVEL_MODE` and waits for a successful response.
+5. The worker thread wakes at `loop.policy_hz`.
+6. The worker reads the latest processed state.
+7. `MotionHandler` supplies either the latest live ROS motion frame or the replay frame at the current motion step.
+8. `ObservationBuilder` builds the ONNX input groups from the configured observation terms.
+9. `OnnxRunner` runs the policy and returns the raw 23-element action vector.
+10. `ActionBuilder` converts the raw action into desired joint positions and `LowCmd` fields.
+11. The worker writes the command into the action buffer.
+12. The main loop publishes the command once when the action buffer sequence changes.
+13. `MotionHandler::advance()` increments the motion replay clock only after a command is successfully built.
 
 If robot state is not changing, motion is missing/stale, observation building fails, ONNX inference fails, or action building fails, no new command is published. This is intentional: the package waits instead of silently publishing commands from incomplete data.
 
@@ -165,7 +167,7 @@ Use `motion_source.loop: true` if you want the recorded clip to repeat. With `lo
 The default config uses this package's bundled example model:
 
 ```text
-models/wbc_teleop/student_126.onnx
+models/wbc_teleop/student_132.onnx
 ```
 
 We included one WBC model trained on our side, so the default config should run as-is.
@@ -177,6 +179,7 @@ Build from the ROS workspace:
 cd /home/robros/workspace
 source /home/robros/workspace/install/setup.bash
 colcon build --packages-select igris_c_gmt_public
+(optional add) `-DPYTHON_EXECUTABLE=/usr/bin/python3`
 ```
 
 Run recorded ONNX motion replay:
@@ -193,7 +196,7 @@ hand-controller events into robot control-mode DDS requests.
 
 ```bash
 source /home/robros/workspace/install/setup.bash
-ros2 run igris_c_gmt_public gmr_control_mode_dds_bridge --ros-args -p dds_domain_id:=<domain_id> -p robot_namespace:=<your_namespace>
+ros2 run igris_c_gmt_public gmr_control_mode_dds_bridge --ros-args -p dds_domain_id:=<domain_id> -p namespace:=<your_namespace>
 ```
 
 PICO controls:
@@ -207,12 +210,13 @@ Overall execution order:
 
 1. Run the IGRIS-C bridge/controller process so it publishes `rt/lowstate` and forwards DDS `rt/lowcmd` into the controller command buffer.
 2. Run `igris_c_gmt_public`.
-3. Switch the robot to LOW_LEVEL mode when ready, either manually or through the GMR control-mode DDS bridge.
+3. In `onnx_replay` mode, the inference node enters LOW_LEVEL mode automatically when ready.
+4. In `ros2` mode, run the GMR control-mode DDS bridge and press `B` on the enabled PICO controller to enter LOW_LEVEL mode manually.
 
 For live ROS 2 teleoperation, set `motion_source.type: "ros2"`, run the GMR teleop process, then run the Redis bridge before `igris_c_gmt_public`.
 
 ## Notes
 
-- The robot must be switched to LOW_LEVEL mode before the published `LowCmd` is applied.
+- The robot must be switched to LOW_LEVEL mode before the published `LowCmd` is applied. `onnx_replay` requests this automatically; `ros2` expects the bridge/manual control path.
 - If the motion sample is missing or stale, the worker skips policy inference and does not publish a new action.
 - The package is intentionally conservative on safety: no hidden mode changes and no dependency on core-only command paths.
