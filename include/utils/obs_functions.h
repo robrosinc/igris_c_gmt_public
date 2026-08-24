@@ -20,23 +20,57 @@ using ObsFunction = std::function<Eigen::VectorXd(const ObservationInput &)>;
 inline constexpr std::size_t kGeneralMotionAnchorOrientationObsSize = 6;
 
 // Edit this list when the policy should observe a different body-position
-// subset.
+// subset. This list is the exact-name expansion of the policy body filters:
+// .*base_link.*, .*Hand.*, .*Ankle.*, .*Elbow.*, .*Shoulder.*, .*Knee.*,
+// .*Hip.*, .*Waist.*.
+
+
+// inline constexpr std::array kMotionBodyNames = {
+//     "base_link",
+//     "Left_Hand",
+//     "Right_Hand",
+//     "Link_Ankle_Roll_Left",
+//     "Link_Ankle_Roll_Right",
+//     "Link_Elbow_Pitch_Left",
+//     "Link_Elbow_Pitch_Right",
+//     "Link_Shoulder_Pitch_Left",
+//     "Link_Shoulder_Pitch_Right",
+//     "Link_Knee_Pitch_Left",
+//     "Link_Knee_Pitch_Right",
+//     "Link_Hip_Pitch_Left",
+//     "Link_Hip_Pitch_Right",
+//     "Link_Neck_Pitch",
+// };
+
 inline constexpr std::array kMotionBodyNames = {
     "base_link",
     "Left_Hand",
     "Right_Hand",
+    "Link_Ankle_Pitch_Left",
+    "Link_Ankle_Pitch_Right",
     "Link_Ankle_Roll_Left",
     "Link_Ankle_Roll_Right",
     "Link_Elbow_Pitch_Left",
     "Link_Elbow_Pitch_Right",
     "Link_Shoulder_Pitch_Left",
     "Link_Shoulder_Pitch_Right",
+    "Link_Shoulder_Roll_Left",
+    "Link_Shoulder_Roll_Right",
+    "Link_Shoulder_Yaw_Left",
+    "Link_Shoulder_Yaw_Right",
     "Link_Knee_Pitch_Left",
     "Link_Knee_Pitch_Right",
     "Link_Hip_Pitch_Left",
     "Link_Hip_Pitch_Right",
-    "Link_Neck_Pitch",
+    "Link_Hip_Roll_Left",
+    "Link_Hip_Roll_Right",
+    "Link_Hip_Yaw_Left",
+    "Link_Hip_Yaw_Right",
+    "Link_Waist_Yaw",
+    "Link_Waist_Roll",
+    "Link_Waist_Pitch",
 };
+
 inline constexpr std::size_t kMotionBodyCount = kMotionBodyNames.size();
 inline constexpr std::size_t kMotionBodyPositionObsSize = kMotionBodyCount * 3;
 inline constexpr std::size_t kMotionBodyOrientationObsSize =
