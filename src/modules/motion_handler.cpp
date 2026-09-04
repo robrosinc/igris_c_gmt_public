@@ -80,6 +80,7 @@ int MotionHandler::configure(const InferenceConfig &config) {
 }
 
 void MotionHandler::reset() {
+  replay_reset_requested_.store(false, std::memory_order_release);
   active_mode_ = "waiting";
   motion_step_ = 0;
   live_motion_seen_ = false;
@@ -111,12 +112,26 @@ void MotionHandler::stop() {
 
 bool MotionHandler::read(MotionHandlerOutput &output,
                          std::chrono::steady_clock::time_point now) {
+  const bool replay_reset_requested = replay_reset_requested_.exchange(
+      false, std::memory_order_acq_rel);
+  if (replay_reset_requested) {
+    motion_step_ = 0;
+    resetReferenceVelocityFilters();
+    if (replay_source_) {
+      replay_source_->reset();
+    }
+    if (recorded_source_) {
+      recorded_source_->reset();
+    }
+  }
+
   output = MotionHandlerOutput{};
   output.step = motion_step_;
   output.frame_offsets = config_.motion_source.frame_stack_offsets;
 
   bool fresh = false;
-  bool mode_changed = false;
+  bool mode_changed = replay_reset_requested;
+  std::size_t clip_frame_count = 0;
   std::string motion_mode = "waiting";
 
   if (ros_receiver_) {
@@ -129,6 +144,7 @@ bool MotionHandler::read(MotionHandlerOutput &output,
       fresh = recorded_source_->getFrameStackAtStep(
           static_cast<std::size_t>(motion_step_), output.frames,
           config_.motion_source.frame_stack_offsets);
+      clip_frame_count = recorded_source_->frameCount();
       motion_mode = fresh ? "recorded" : "waiting";
     } else {
       const std::shared_ptr<const MotionFrame> motion_frame =
@@ -174,6 +190,7 @@ bool MotionHandler::read(MotionHandlerOutput &output,
     fresh = replay_source_->getFrameStackAtStep(
         static_cast<std::size_t>(motion_step_), output.frames,
         config_.motion_source.frame_stack_offsets);
+    clip_frame_count = replay_source_->frameCount();
     motion_mode = fresh ? config_.motion_source.type : "waiting";
   }
 
@@ -190,9 +207,20 @@ bool MotionHandler::read(MotionHandlerOutput &output,
   updateReferenceVelocityFilters(output.frames);
   output.available = true;
   output.mode_changed = mode_changed;
+  output.replay_active = clip_frame_count > 0;
+  output.replay_restarted = output.replay_active && mode_changed;
+  output.clip_end =
+      clip_frame_count > 0 &&
+      (config_.motion_source.loop
+           ? (motion_step_ + 1) % clip_frame_count == 0
+           : motion_step_ + 1 == clip_frame_count);
   output.step = motion_step_;
   output.mode = active_mode_;
   return true;
+}
+
+void MotionHandler::requestReplayReset() {
+  replay_reset_requested_.store(true, std::memory_order_release);
 }
 
 void MotionHandler::advance() { ++motion_step_; }

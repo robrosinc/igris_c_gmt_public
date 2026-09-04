@@ -4,6 +4,7 @@
 #include "core/types.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -19,6 +20,9 @@ class RosMotionReceiver;
 struct MotionHandlerOutput {
   bool available = false;
   bool mode_changed = false;
+  bool replay_restarted = false;
+  bool replay_active = false;
+  bool clip_end = false;
   uint64_t step = 0;
   std::string mode = "waiting";
   std::vector<MotionFrame> frames;
@@ -37,6 +41,8 @@ public:
   bool read(MotionHandlerOutput &output,
             std::chrono::steady_clock::time_point now =
                 std::chrono::steady_clock::now());
+  // Thread-safe request consumed by the inference worker before its next read.
+  void requestReplayReset();
   void advance();
 
 private:
@@ -53,6 +59,7 @@ private:
 
   std::string active_mode_ = "waiting";
   uint64_t motion_step_ = 0;
+  std::atomic<bool> replay_reset_requested_{false};
 
   bool live_motion_seen_ = false;
   uint64_t last_live_motion_seq_ = 0;

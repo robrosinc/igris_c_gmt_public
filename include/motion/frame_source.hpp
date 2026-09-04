@@ -23,6 +23,7 @@ public:
   virtual bool getFrameStackAtStep(std::size_t step,
                                    std::vector<MotionFrame> &frames,
                                    const std::vector<int> &offsets);
+  virtual std::size_t frameCount() const { return 0; }
   virtual void reset() = 0;
 };
 

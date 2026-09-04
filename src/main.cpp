@@ -179,18 +179,28 @@ bool ParseInt(const char *value, int &parsed) {
 
 struct ActionSample {
   igris_c_gmt_public::InferenceCommand command;
+  igris_c_gmt_public::Vector23d actual_joint_position =
+      igris_c_gmt_public::Vector23d::Zero();
+  igris_c_gmt_public::Vector23d reference_joint_position =
+      igris_c_gmt_public::Vector23d::Zero();
   uint64_t sequence = 0;
   uint64_t motion_step = 0;
   double worker_ms = 0.0;
   double onnx_ms = 0.0;
   std::string motion_mode;
+  bool replay_restarted = false;
+  bool replay_active = false;
+  bool motion_clip_end = false;
   bool valid = false;
 };
 
 class ActionBuffer {
 public:
   void write(igris_c_gmt_public::InferenceCommand command, uint64_t motion_step,
-             double worker_ms, double onnx_ms, std::string motion_mode) {
+             double worker_ms, double onnx_ms, std::string motion_mode,
+             const igris_c_gmt_public::Vector23d &actual_joint_position,
+             const igris_c_gmt_public::Vector23d &reference_joint_position,
+             bool replay_restarted, bool replay_active, bool motion_clip_end) {
     std::lock_guard<std::mutex> lock(mutex_);
     sample_.command = std::move(command);
     sample_.sequence = ++sequence_;
@@ -198,6 +208,11 @@ public:
     sample_.worker_ms = worker_ms;
     sample_.onnx_ms = onnx_ms;
     sample_.motion_mode = std::move(motion_mode);
+    sample_.actual_joint_position = actual_joint_position;
+    sample_.reference_joint_position = reference_joint_position;
+    sample_.replay_restarted = replay_restarted;
+    sample_.replay_active = replay_active;
+    sample_.motion_clip_end = motion_clip_end;
     sample_.valid = true;
   }
 
@@ -215,6 +230,93 @@ private:
   mutable std::mutex mutex_;
   ActionSample sample_;
   uint64_t sequence_ = 0;
+};
+
+class MotionMpjpeLogger {
+public:
+  explicit MotionMpjpeLogger(const igris_c_gmt_public::InferenceConfig &config) {
+    if (!config.logging.mpjpe_enabled) {
+      return;
+    }
+    const std::filesystem::path path(config.logging.mpjpe_txt_path);
+    if (path.has_parent_path()) {
+      std::filesystem::create_directories(path.parent_path());
+    }
+    file_.open(path, std::ios::out | std::ios::app);
+    if (!file_) {
+      throw std::runtime_error("Failed to open MPJPE log: " + path.string());
+    }
+    path_ = path.string();
+    const std::string &motion_path = config.motion_source.onnx_path.empty()
+                                         ? config.motion_source.csv_path
+                                         : config.motion_source.onnx_path;
+    motion_name_ = std::filesystem::path(motion_path).filename().string();
+  }
+
+  bool enabled() const { return file_.is_open(); }
+  const std::string &path() const { return path_; }
+
+  void write(const ActionSample &sample, uint64_t frame_count,
+             double mpjpe_rad) {
+    if (!file_) {
+      return;
+    }
+    file_ << "timestamp_ns=" << NowNs() << " motion_mode="
+          << sample.motion_mode << " motion=" << motion_name_
+          << " motion_end_step=" << sample.motion_step
+          << " frames=" << frame_count
+          << " joints=" << igris_c_gmt_public::kRlNumJointActions
+          << " joint_position_mpjpe_rad=" << std::fixed
+          << std::setprecision(8) << mpjpe_rad << '\n';
+    file_.flush();
+  }
+
+private:
+  std::ofstream file_;
+  std::string path_;
+  std::string motion_name_;
+};
+
+class MotionMpjpeTracker {
+public:
+  explicit MotionMpjpeTracker(MotionMpjpeLogger &logger) : logger_(logger) {}
+
+  void start() {
+    active_ = true;
+    accumulated_joint_error_rad_ = 0.0;
+    frame_count_ = 0;
+  }
+
+  void stop() { active_ = false; }
+
+  void add(const ActionSample &sample) {
+    if (!active_ || !logger_.enabled() || !sample.replay_active) {
+      return;
+    }
+
+    accumulated_joint_error_rad_ +=
+        (sample.actual_joint_position - sample.reference_joint_position)
+            .cwiseAbs()
+            .sum();
+    ++frame_count_;
+
+    if (sample.motion_clip_end) {
+      const double mpjpe_rad =
+          accumulated_joint_error_rad_ /
+          static_cast<double>(frame_count_ *
+                              igris_c_gmt_public::kRlNumJointActions);
+      logger_.write(sample, frame_count_, mpjpe_rad);
+      std::cerr << "Recorded motion MPJPE: " << mpjpe_rad << " rad over "
+                << frame_count_ << " frames\n";
+      active_ = false;
+    }
+  }
+
+private:
+  MotionMpjpeLogger &logger_;
+  bool active_ = false;
+  uint64_t frame_count_ = 0;
+  double accumulated_joint_error_rad_ = 0.0;
 };
 
 void ResolveRobotNetworkSettings(igris_c_gmt_public::InferenceConfig &config,
@@ -361,6 +463,11 @@ int main(int argc, char **argv) {
                 << (config.logging.only_low_command_mode ? "true" : "false")
                 << "\n";
     }
+    MotionMpjpeLogger mpjpe_logger(config);
+    if (mpjpe_logger.enabled()) {
+      std::cerr << "Motion MPJPE logging enabled path='"
+                << mpjpe_logger.path() << "'\n";
+    }
 
     std::cout << "Waiting for first LowState on DDS topic rt/lowstate..."
               << std::endl;
@@ -473,7 +580,12 @@ int main(int argc, char **argv) {
                 }
                 action_buffer.write(std::move(command), motion_sample.step,
                                     worker_ms, onnx_runner.lastInferenceMs(),
-                                    motion_sample.mode);
+                                    motion_sample.mode,
+                                    state_sample.rl_joint_position,
+                                    observation.motion_joint_position,
+                                    motion_sample.replay_restarted,
+                                    motion_sample.replay_active,
+                                    motion_sample.clip_end);
                 motion_handler.advance();
               } else {
                 pipeline_ready = false;
@@ -513,6 +625,9 @@ int main(int argc, char **argv) {
     double onnx_sum_ms = 0.0;
     double onnx_max_ms = 0.0;
     int exit_code = 0;
+    bool was_low_command_mode = false;
+    bool awaiting_replay_restart = false;
+    MotionMpjpeTracker mpjpe_tracker(mpjpe_logger);
 
     while (g_running.load(std::memory_order_relaxed)) {
       if (worker_failed.load(std::memory_order_acquire)) {
@@ -528,14 +643,34 @@ int main(int argc, char **argv) {
         last_state_sequence = state_sequence;
       }
 
+      const auto robot_mode = robot_io.snapshotRobotMode();
+      const bool low_command_mode =
+          robot_mode.valid && robot_mode.low_command_mode;
+      if (low_command_mode && !was_low_command_mode) {
+        motion_handler.requestReplayReset();
+        mpjpe_tracker.start();
+        awaiting_replay_restart = true;
+      } else if (!low_command_mode && was_low_command_mode) {
+        mpjpe_tracker.stop();
+        awaiting_replay_restart = false;
+      }
+      was_low_command_mode = low_command_mode;
+
       ActionSample action_sample;
       if (action_buffer.consume(last_action_sequence, action_sample)) {
+        if (awaiting_replay_restart && action_sample.replay_active) {
+          if (!action_sample.replay_restarted) {
+            continue;
+          }
+          awaiting_replay_restart = false;
+        }
         if (!robot_io.publish(action_sample.command)) {
           std::cerr << "Failed to publish LowCmd\n";
           exit_code = 1;
           g_running.store(false, std::memory_order_relaxed);
           break;
         }
+        mpjpe_tracker.add(action_sample);
         ++published_action_count;
         ++published_action_window_count;
         last_motion_step = action_sample.motion_step;

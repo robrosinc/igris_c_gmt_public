@@ -186,6 +186,15 @@ InferenceConfig LoadInferenceConfig(const std::string &config_path) {
   if (config.logging.enabled && config.logging.csv_path.empty()) {
     throw std::runtime_error("logging.csv_path is required when logging.enabled is true");
   }
+  config.logging.mpjpe_enabled =
+      GetOr<bool>(logging_cfg, "mpjpe_enabled", config.logging.mpjpe_enabled);
+  config.logging.mpjpe_txt_path = ResolvePath(
+      base_dir, GetOr<std::string>(logging_cfg, "mpjpe_txt_path",
+                                   "../log/motion_mpjpe.txt"));
+  if (config.logging.mpjpe_enabled && config.logging.mpjpe_txt_path.empty()) {
+    throw std::runtime_error(
+        "logging.mpjpe_txt_path is required when logging.mpjpe_enabled is true");
+  }
 
   return config;
 }

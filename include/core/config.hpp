@@ -21,6 +21,8 @@ struct LoggingConfig {
   bool enabled = false;
   std::string csv_path;
   bool only_low_command_mode = true;
+  bool mpjpe_enabled = true;
+  std::string mpjpe_txt_path;
 };
 
 struct RosMotionConfig {

@@ -339,6 +339,8 @@ public:
     return true;
   }
 
+  std::size_t frameCount() const override { return frames_.size(); }
+
   void reset() override { start_time_ = std::chrono::steady_clock::now(); }
 
 private:
@@ -453,6 +455,8 @@ public:
     }
     return true;
   }
+
+  std::size_t frameCount() const override { return num_frames_; }
 
   void reset() override {
     start_time_ = Clock::now();
